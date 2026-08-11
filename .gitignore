@@ -1,0 +1,25 @@
+config.yaml
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.idea/
+.vscode/
+.mewcode/
+.claude/
+CLAUDE.md
+
+# Playwright snapshot leaks
+example-com-snapshot.md
+example-*.md
+
+# Playwright MCP 运行日志
+.playwright-mcp/

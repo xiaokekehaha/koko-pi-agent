@@ -1,0 +1,260 @@
+Screen {
+    layers: default mascot;
+}
+
+#title-bar {
+    dock: top;
+    width: 100%;
+    height: 3;
+    padding: 0 1;
+}
+
+/* --- Provider Selection --- */
+
+#provider-select {
+    align: center middle;
+    width: 100%;
+    height: 1fr;
+}
+
+#select-label {
+    text-align: center;
+    width: 100%;
+    height: auto;
+    margin-top: 2;
+    text-style: bold;
+}
+
+#provider-list {
+    width: 60;
+    height: auto;
+    max-height: 16;
+    margin: 1 2;
+}
+
+/* --- Chat Area --- */
+
+#chat-area {
+    height: 1fr;
+    min-height: 18;
+    padding: 0 1;
+}
+
+.message {
+    padding: 0 2;
+    margin: 0;
+    width: 100%;
+    height: auto;
+}
+
+.user-row {
+    height: auto;
+    width: 100%;
+}
+
+.user-message {
+    color: $text;
+}
+
+.ai-row {
+    height: auto;
+    width: 100%;
+}
+
+.ai-message {
+    color: $text;
+}
+
+.error-message {
+    color: $error;
+    padding: 0 2;
+}
+
+.system-message {
+    color: $text-muted;
+    padding: 0 2;
+}
+
+/* --- Tool Call Block --- */
+
+.tool-block {
+    padding: 0 2;
+    width: auto;
+    height: auto;
+    color: $text;
+}
+
+.tool-block-loading {
+    color: $text-muted;
+}
+
+.tool-block-error {
+    color: $error;
+}
+
+/* --- Thinking Display --- */
+
+.thinking-done {
+    color: $text-muted;
+    text-style: italic;
+}
+
+/* --- Sub-Agent Block --- */
+
+.subagent-block {
+    color: $text;
+    padding: 0 2;
+}
+
+/* --- Input Area --- */
+
+#spinner-live {
+    height: 1;
+    padding: 0 2;
+}
+
+#input-area {
+    dock: bottom;
+    height: auto;
+    max-height: 20;
+    padding: 0 1;
+    border-top: solid #303030;
+}
+
+#chat-input {
+    height: auto;
+    min-height: 1;
+    max-height: 10;
+    border: none;
+}
+
+#status-bar {
+    height: auto;
+    min-height: 1;
+    width: 100%;
+    padding: 0 1;
+    border-top: solid #303030;
+}
+
+#mode-label {
+    width: auto;
+    height: 1;
+    color: $text-muted;
+    padding: 0 1;
+}
+
+#teammates-label {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+}
+
+#model-label {
+    width: 1fr;
+    height: 1;
+    text-align: right;
+    color: $text-muted;
+}
+
+/* --- Teammate Tree --- */
+
+#teammate-tree {
+    height: auto;
+    padding: 0 2;
+}
+
+/* --- Plan Approval Dialog --- */
+
+PlanApprovalDialog {
+    align: center middle;
+}
+
+#plan-dialog {
+    width: 64;
+    height: auto;
+    padding: 1 2;
+    background: $surface;
+    border: solid $warning;
+}
+
+#plan-title {
+    text-style: bold;
+    text-align: center;
+    padding: 0 0 1 0;
+}
+
+#plan-dialog Button {
+    width: 100%;
+    margin: 0 0 1 0;
+}
+
+/* --- AskUser Dialog --- */
+
+AskUserDialog {
+    align: center middle;
+}
+
+#askuser-dialog {
+    width: 64;
+    height: auto;
+    max-height: 20;
+    padding: 1 2;
+    background: $surface;
+    border: solid $accent;
+}
+
+#askuser-title {
+    text-style: bold;
+    text-align: center;
+    padding: 0 0 1 0;
+}
+
+#askuser-options {
+    height: auto;
+    max-height: 12;
+}
+
+/* --- Inline Permission Widget --- */
+
+#perm-inline {
+    height: auto;
+    padding: 0 0;
+    margin: 0 0;
+}
+
+#perm-content {
+    padding: 0 0;
+}
+
+/* --- Inline Plan Widget --- */
+
+#plan-inline {
+    height: auto;
+    padding: 0 0;
+}
+
+#plan-content {
+    padding: 0 0;
+}
+
+/* --- Inline AskUser Widget --- */
+
+#askuser-inline {
+    height: auto;
+    padding: 0 0;
+}
+
+#askuser-content {
+    padding: 0 0;
+}
+
+/* --- Inline Resume Widget --- */
+
+#resume-inline {
+    height: auto;
+    padding: 0 0;
+}
+
+#resume-content {
+    padding: 0 0;
+}
