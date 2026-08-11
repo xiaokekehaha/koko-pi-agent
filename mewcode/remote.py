@@ -714,6 +714,13 @@ class RemoteServer:
     def refresh_status(self) -> None:
         pass  # Remote 模式不需要刷新 TUI 状态栏
 
+    def show_mascot(self) -> None:
+        """Schedule the Web UI event required by the command controller."""
+        asyncio.ensure_future(self._broadcast({
+            "type": "mascot_show",
+            "data": None,
+        }))
+
     # ------------------------------------------------------------------
     # 权限响应处理
     # ------------------------------------------------------------------

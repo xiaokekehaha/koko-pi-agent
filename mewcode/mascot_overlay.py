@@ -25,6 +25,7 @@ class MascotOverlay(Vertical, can_focus=True):
     MascotOverlay {
         display: none;
         overlay: screen;
+        constrain: inside;
         layer: mascot;
         dock: right;
         width: 36;
