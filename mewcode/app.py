@@ -65,6 +65,7 @@ from mewcode.memory import (
     render_reminder,
 )
 from mewcode.mascot_overlay import MascotOverlay
+from mewcode.ui_state import UIStateStore
 from mewcode.permissions import (
     DangerousCommandDetector,
     PathSandbox,
@@ -162,7 +163,8 @@ class ChatInput(TextArea):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.cursor_blink = False
+        self.cursor_blink = True
+        self.border_title = " Message "
         self._history: list[str] = []
         self._history_index: int = -1
         self._history_draft: str = ""
@@ -235,8 +237,15 @@ class ChatInput(TextArea):
 
     def action_dismiss_popup(self) -> None:
         popup = self._popup()
-        if popup is not None:
+        if popup is not None and popup.is_visible:
             popup.hide()
+            return
+        try:
+            mascot = self.app.query_one(MascotOverlay)
+            if mascot.is_open:
+                mascot.close_mascot()
+        except Exception:
+            pass
 
     def action_nav_up(self) -> None:
         popup = self._popup()
@@ -300,6 +309,26 @@ class ChatInput(TextArea):
             return
         if after:
             self.post_message(self.AtFileRequest(after))
+
+
+class ChatTranscript(VerticalScroll):
+    """Scrollable conversation that gives keyboard input back to the composer.
+
+    Textual focuses a scroll view (or a focusable child such as a tool block)
+    when it is clicked. Scrolling and expanding content should not leave the
+    user typing into nowhere, so a completed click restores the composer when
+    it is available. Inline approval/question widgets disable the composer and
+    therefore keep their intentional focus.
+    """
+
+    def on_click(self) -> None:
+        try:
+            input_area = self.app.query_one("#input-area", Vertical)
+            chat_input = self.app.query_one("#chat-input", ChatInput)
+        except Exception:
+            return
+        if input_area.display and not chat_input.disabled:
+            chat_input.focus(scroll_visible=False)
 
 
 COLLAPSIBLE_TOOLS = {"ReadFile", "Glob", "Grep", "ToolSearch"}
@@ -582,6 +611,7 @@ class MewCodeApp(App):
     CSS_PATH = "styles.tcss"
     TITLE = "MewCode"
     INLINE_PADDING = 0
+    AUTO_FOCUS = "#chat-input"
     theme = "mewcode"
     BINDINGS = [
         Binding("ctrl+c", "handle_ctrl_c", "Quit", priority=True),
@@ -604,6 +634,7 @@ class MewCodeApp(App):
         enable_coordinator_mode: bool = False,
         driver_class: type | None = None,
         sandbox_config: Any = None,
+        ui_state_path: str | Path | None = None,
     ) -> None:
         super().__init__(driver_class=driver_class)
         self.providers = providers
@@ -617,6 +648,7 @@ class MewCodeApp(App):
         self._enable_coordinator_mode = enable_coordinator_mode
         from mewcode.config import SandboxAppConfig
         self._sandbox_cfg: SandboxAppConfig = sandbox_config or SandboxAppConfig()
+        self._ui_state_store = UIStateStore(ui_state_path)
         self.client: LLMClient | None = None
         self.conversation = ConversationManager()
         self.registry: ToolRegistry = create_default_registry()
@@ -684,7 +716,7 @@ class MewCodeApp(App):
                     ],
                     id="provider-list",
                 )
-        yield VerticalScroll(id="chat-area")
+        yield ChatTranscript(id="chat-area")
         with Vertical(id="input-area"):
             yield ChatInput(id="chat-input")
             with Horizontal(id="status-bar"):
@@ -702,6 +734,10 @@ class MewCodeApp(App):
         else:
             self.query_one("#chat-area").display = False
             self.query_one("#input-area").display = False
+            if len(self.providers) > 1:
+                self.query_one("#provider-list", OptionList).focus()
+        if self._ui_state_store.mascot_open:
+            self.query_one(MascotOverlay).show_mascot(focus_close=False)
 
     def _select_provider(self, provider: ProviderConfig) -> None:
         self._selected_provider = provider
@@ -980,7 +1016,9 @@ class MewCodeApp(App):
         self.query_one("#chat-area").display = True
         self.query_one("#input-area").display = True
         chat_input = self.query_one("#chat-input", ChatInput)
-        chat_input.placeholder = "Send a message..."
+        chat_input.placeholder = (
+            "Type a message...  Enter to send · Shift+Enter for newline"
+        )
         chat_input.load_history(work_dir)
         chat_input.focus()
 
@@ -1037,11 +1075,23 @@ class MewCodeApp(App):
 
     def show_mascot(self) -> None:
         self.query_one(MascotOverlay).show_mascot()
+        self._ui_state_store.set_mascot_open(True)
 
     def on_mascot_overlay_closed(self, _event: MascotOverlay.Closed) -> None:
-        """Return keyboard focus to the composer after the overlay closes."""
+        """Persist the close and restore focus to the currently visible UI."""
+        self._ui_state_store.set_mascot_open(False)
+        if len(self.providers) > 1:
+            try:
+                provider_select = self.query_one("#provider-select", Vertical)
+                if provider_select.display:
+                    self.query_one("#provider-list", OptionList).focus()
+                    return
+            except Exception:
+                pass
         try:
-            self.query_one("#chat-input", ChatInput).focus(scroll_visible=False)
+            chat_input = self.query_one("#chat-input", ChatInput)
+            if self.query_one("#input-area", Vertical).display:
+                chat_input.focus(scroll_visible=False)
         except Exception:
             pass
 
@@ -1232,6 +1282,10 @@ class MewCodeApp(App):
                 block._render_done()
 
     def action_cancel(self) -> None:
+        mascot = self.query_one(MascotOverlay)
+        if mascot.is_open:
+            mascot.close_mascot()
+            return
         popup = self.query_one(CompletionPopup)
         if popup.is_visible:
             popup.hide()

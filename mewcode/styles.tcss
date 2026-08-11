@@ -121,11 +121,22 @@ Screen {
     border-top: solid #303030;
 }
 
+#input-area:focus-within {
+    border-top: solid $primary;
+}
+
 #chat-input {
     height: auto;
-    min-height: 1;
+    min-height: 3;
     max-height: 10;
-    border: none;
+    padding: 0 1;
+    background: #202020;
+    border: round #3a3a3a;
+}
+
+#chat-input:focus {
+    background: #24212c;
+    border: round $primary;
 }
 
 #status-bar {
