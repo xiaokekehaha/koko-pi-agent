@@ -11,7 +11,7 @@ async def handle_mascot(ctx: CommandContext) -> None:
 MASCOT_COMMAND = Command(
     name="mascot",
     aliases=["mew", "cat"],
-    description="显示悬浮 ASCII 猫",
+    description="显示可拖拽的 ASCII 柯基动画",
     usage="/mascot",
     type=CommandType.LOCAL_UI,
     handler=handle_mascot,

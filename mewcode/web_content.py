@@ -141,22 +141,26 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 #mascot-overlay {
   display: none; position: fixed; top: 64px; right: 20px; z-index: 1000;
   width: 232px; max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 16px); overflow: hidden;
   padding: 30px 16px 14px;
   background: var(--bg-surface); border: 1px solid var(--accent-dim);
   border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  cursor: grab; touch-action: none; user-select: none;
 }
 #mascot-overlay.show { display: block; }
+#mascot-overlay.dragging { cursor: grabbing; }
 #mascot-overlay pre {
-  margin: 0; overflow: hidden; color: var(--accent);
+  width: 19ch; height: 11.25em; margin: 0 auto; overflow: hidden;
+  color: var(--accent);
   font: 600 14px/1.25 'SF Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
-  text-align: center; white-space: pre;
+  text-align: left; white-space: pre; pointer-events: none;
 }
 #mascot-close {
   position: absolute; top: 5px; right: 6px;
   width: 26px; height: 24px; padding: 0;
   border: 1px solid transparent; border-radius: 4px;
   background: transparent; color: var(--text-dim);
-  font: bold 16px/1 monospace; cursor: pointer;
+  font: bold 16px/1 monospace; cursor: pointer; touch-action: manipulation;
 }
 #mascot-close:hover, #mascot-close:focus-visible {
   color: var(--text-bright); border-color: var(--border);
@@ -227,14 +231,9 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 </style>
 </head>
 <body>
-<div id="mascot-overlay" role="region" aria-label="MewCode ASCII mascot" aria-hidden="true">
+<div id="mascot-overlay" role="region" aria-label="MewCode animated ASCII corgi" aria-hidden="true">
   <button id="mascot-close" type="button" aria-label="Close mascot" title="Close">x</button>
-  <pre id="mascot-art">       /\_/\
-      ( o.o )
-       &gt; ^ &lt;
-     .-------.
-    / MEWCODE \
-    '---------'</pre>
+  <pre id="mascot-art" aria-hidden="true"></pre>
 </div>
 <div id="app">
   <div id="status-bar">
@@ -262,6 +261,42 @@ const tokenInfo = document.getElementById('token-info');
 const slashMenu = document.getElementById('slash-menu');
 const mascotOverlay = document.getElementById('mascot-overlay');
 const mascotClose = document.getElementById('mascot-close');
+const mascotArt = document.getElementById('mascot-art');
+
+const mascotFrames = [
+  String.raw`     /\       /\
+    /  \_____/  \
+   /             \
+  |   o       o   |
+  |       ^       |
+  |    \_____/    |
+   \_____________/
+     /|       |\
+    /_|_______|_\
+`,
+  String.raw`     /\       /\
+    /  \_____/  \
+   /             \
+  |   -       o   |
+  |       ^       |
+  |    \__U__/    |
+   \_____________/
+     /|       |\
+    /_|_______|_\
+`,
+  String.raw`     /\       /\
+    /  \_____/  \
+   /             \
+  |   o       -   |
+  |       ^       |
+  |    \__U__/    |
+   \_____________/
+     /|       |\
+    /_|_______|_\
+`,
+].map(frame => frame.trimEnd());
+const MASCOT_FRAME_MS = 360;
+const MASCOT_VIEWPORT_GAP = 8;
 
 let ws = null;
 let streaming = false;
@@ -275,6 +310,9 @@ let currentThinkingText = '';
 let autoScroll = true;
 let pingTimer = null;
 let connectedOnce = false;
+let mascotFrameIndex = 0;
+let mascotTimer = null;
+let mascotDrag = null;
 
 // Markdown 渲染配置
 if (typeof marked !== 'undefined') {
@@ -748,15 +786,108 @@ function updateUI() {
   if (!streaming) inputEl.focus();
 }
 
+function renderMascotFrame() {
+  mascotArt.textContent = mascotFrames[mascotFrameIndex];
+}
+
+function stopMascotAnimation() {
+  if (mascotTimer !== null) {
+    window.clearInterval(mascotTimer);
+    mascotTimer = null;
+  }
+}
+
+function startMascotAnimation() {
+  stopMascotAnimation();
+  mascotFrameIndex = 0;
+  renderMascotFrame();
+  mascotTimer = window.setInterval(() => {
+    mascotFrameIndex = (mascotFrameIndex + 1) % mascotFrames.length;
+    renderMascotFrame();
+  }, MASCOT_FRAME_MS);
+}
+
+function clampMascotPosition(left, top) {
+  const rect = mascotOverlay.getBoundingClientRect();
+  const maxLeft = Math.max(
+    MASCOT_VIEWPORT_GAP,
+    window.innerWidth - rect.width - MASCOT_VIEWPORT_GAP,
+  );
+  const maxTop = Math.max(
+    MASCOT_VIEWPORT_GAP,
+    window.innerHeight - rect.height - MASCOT_VIEWPORT_GAP,
+  );
+  return {
+    left: Math.min(Math.max(left, MASCOT_VIEWPORT_GAP), maxLeft),
+    top: Math.min(Math.max(top, MASCOT_VIEWPORT_GAP), maxTop),
+  };
+}
+
+function setMascotPosition(left, top) {
+  const clamped = clampMascotPosition(left, top);
+  mascotOverlay.style.right = 'auto';
+  mascotOverlay.style.left = Math.round(clamped.left) + 'px';
+  mascotOverlay.style.top = Math.round(clamped.top) + 'px';
+}
+
+function keepMascotInViewport() {
+  if (!mascotOverlay.classList.contains('show')) return;
+  const rect = mascotOverlay.getBoundingClientRect();
+  setMascotPosition(rect.left, rect.top);
+}
+
+function stopMascotDrag() {
+  if (mascotDrag === null) return;
+  const pointerId = mascotDrag.pointerId;
+  mascotDrag = null;
+  mascotOverlay.classList.remove('dragging');
+  if (mascotOverlay.hasPointerCapture(pointerId)) {
+    mascotOverlay.releasePointerCapture(pointerId);
+  }
+}
+
 function showMascot() {
   mascotOverlay.classList.add('show');
   mascotOverlay.setAttribute('aria-hidden', 'false');
+  startMascotAnimation();
+  window.requestAnimationFrame(keepMascotInViewport);
 }
 
 function hideMascot() {
+  stopMascotAnimation();
+  stopMascotDrag();
   mascotOverlay.classList.remove('show');
   mascotOverlay.setAttribute('aria-hidden', 'true');
   if (!inputEl.disabled) inputEl.focus();
+}
+
+function onMascotPointerDown(event) {
+  if (!event.isPrimary || event.button !== 0 || mascotClose.contains(event.target)) {
+    return;
+  }
+  const rect = mascotOverlay.getBoundingClientRect();
+  mascotDrag = {
+    pointerId: event.pointerId,
+    offsetX: event.clientX - rect.left,
+    offsetY: event.clientY - rect.top,
+  };
+  mascotOverlay.classList.add('dragging');
+  mascotOverlay.setPointerCapture(event.pointerId);
+  event.preventDefault();
+}
+
+function onMascotPointerMove(event) {
+  if (mascotDrag === null || event.pointerId !== mascotDrag.pointerId) return;
+  setMascotPosition(
+    event.clientX - mascotDrag.offsetX,
+    event.clientY - mascotDrag.offsetY,
+  );
+  event.preventDefault();
+}
+
+function onMascotPointerEnd(event) {
+  if (mascotDrag === null || event.pointerId !== mascotDrag.pointerId) return;
+  stopMascotDrag();
 }
 
 // ── 斜杠命令菜单 ──
@@ -854,6 +985,12 @@ inputEl.addEventListener('input', () => {
 });
 
 sendBtn.addEventListener('click', sendMessage);
+mascotOverlay.addEventListener('pointerdown', onMascotPointerDown);
+mascotOverlay.addEventListener('pointermove', onMascotPointerMove);
+mascotOverlay.addEventListener('pointerup', onMascotPointerEnd);
+mascotOverlay.addEventListener('pointercancel', onMascotPointerEnd);
+mascotOverlay.addEventListener('lostpointercapture', onMascotPointerEnd);
+mascotClose.addEventListener('pointerdown', (event) => event.stopPropagation());
 mascotClose.addEventListener('click', hideMascot);
 
 document.addEventListener('keydown', (event) => {
@@ -861,6 +998,10 @@ document.addEventListener('keydown', (event) => {
     event.preventDefault();
     hideMascot();
   }
+});
+
+window.addEventListener('resize', () => {
+  window.requestAnimationFrame(keepMascotInViewport);
 });
 
 // 启动
