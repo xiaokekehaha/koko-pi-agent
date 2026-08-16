@@ -207,6 +207,8 @@ class RemoteServer:
                 elif msg_type == "cancel":
                     if self._cancel_event is not None:
                         self._cancel_event.set()
+                    if self.agent is not None:
+                        self.agent.cancel_active_run()
 
                 elif msg_type == "ping":
                     # 应用层保活

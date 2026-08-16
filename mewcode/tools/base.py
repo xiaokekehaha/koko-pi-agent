@@ -24,6 +24,7 @@ ToolCategory = Literal["read", "write", "command"]
 class ToolResult:
     output: str
     is_error: bool = False
+    terminate: bool = False
 
 
 class Tool(ABC):

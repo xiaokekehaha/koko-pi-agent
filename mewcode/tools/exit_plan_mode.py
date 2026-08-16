@@ -49,5 +49,6 @@ class ExitPlanModeTool(Tool):
                 "Plan mode will be exited after this turn. "
                 "The user will be shown the plan approval dialog. "
                 "Do not call any more tools — end your turn now."
-            )
+            ),
+            terminate=True,
         )

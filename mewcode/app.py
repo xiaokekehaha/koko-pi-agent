@@ -1301,6 +1301,8 @@ class MewCodeApp(App):
                         f"Task moved to background (id: {task_id})"
                     )
                     return
+            if self.agent is not None:
+                self.agent.cancel_active_run()
             self._agent_task.cancel()
 
     async def _prefetch_relevant_memories(self, query: str) -> str:

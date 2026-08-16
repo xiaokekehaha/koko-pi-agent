@@ -23,7 +23,6 @@ from mewcode.agent import (
     ToolUseEvent,
     TurnComplete,
     UsageEvent,
-    partition_tool_calls,
 )
 from mewcode.prompts import build_environment_context, build_plan_mode_reminder, build_system_prompt
 from mewcode.client import LLMClient
@@ -470,24 +469,6 @@ async def test_plan_mode_denied_tool_returns_error():
     assert "rejected" in out or "denied" in out or "拒绝" in c["tool_result"][0].output
     assert len(c["error"]) == 0
 
-def test_partition_tool_calls():
-    """分批逻辑会把可并发执行的调用归到同一组。"""
-    from mewcode.tools.base import ToolCallComplete
-
-    calls = [
-        ToolCallComplete("1", "ReadFile", {}),
-        ToolCallComplete("2", "ReadFile", {}),
-        ToolCallComplete("3", "EditFile", {}),
-        ToolCallComplete("4", "ReadFile", {}),
-        ToolCallComplete("5", "ReadFile", {}),
-    ]
-    registry = create_default_registry()
-    batches = partition_tool_calls(calls, registry)
-    assert len(batches) == 3
-    assert batches[0].concurrent and len(batches[0].calls) == 2
-    assert not batches[1].concurrent and len(batches[1].calls) == 1
-    assert batches[2].concurrent and len(batches[2].calls) == 2
-
 def test_system_prompt_normal():
     sp = build_system_prompt()
     assert "MewCode" in sp
@@ -511,8 +492,9 @@ def test_environment_context():
 
 @pytest.mark.asyncio
 async def test_streaming_tool_execution():
-    """工具在 LLM 流式输出期间就开始执行，不等整个响应结束。"""
+    """工具必须等完整响应和 stop reason 确认后才开始执行。"""
     execution_log: list[tuple[str, float]] = []
+    stream_finished = False
     original_execute = None
 
     # 用一个慢速流模拟 LLM 还在输出，验证第一个工具在流结束前已经开始执行
@@ -522,8 +504,10 @@ async def test_streaming_tool_execution():
             self._call_index += 1
             for e in events:
                 if isinstance(e, StreamEnd):
-                    # 在 StreamEnd 前等一下，让已提交的工具有时间执行
+                    # 留出调度时间，确认工具不会在流结束前抢跑。
                     await asyncio.sleep(0.05)
+                    nonlocal stream_finished
+                    stream_finished = True
                 yield e
                 await asyncio.sleep(0)
 
@@ -546,6 +530,7 @@ async def test_streaming_tool_execution():
 
     async def patched_execute(params):
         import time
+        assert stream_finished is True
         execution_log.append(("start", time.monotonic()))
         result = await original_execute(params)
         execution_log.append(("end", time.monotonic()))
@@ -564,5 +549,4 @@ async def test_streaming_tool_execution():
     c = _collect(events)
     # 两个 Glob 调用都应产出结果
     assert len(c["tool_result"]) == 2
-    # 工具应该在流式阶段就开始执行，所以 execution_log 至少有记录
-    assert len(execution_log) >= 2, "工具未在流式阶段执行"
+    assert len(execution_log) >= 2

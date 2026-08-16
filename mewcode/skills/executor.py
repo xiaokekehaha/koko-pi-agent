@@ -79,7 +79,7 @@ class SkillExecutor:
             elif isinstance(event, ErrorEvent):
                 result_parts.append(f"\n[Error: {event.message}]")
             elif isinstance(event, LoopComplete):
-                break
+                continue
 
         return "".join(result_parts)
 
