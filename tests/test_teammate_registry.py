@@ -11,13 +11,16 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
-from mewcode.__main__ import _build_teammate_registry
+from mewcode.__main__ import _open_teammate_runtime
 from pydantic import BaseModel
 
 from mewcode.teams.manager import TeamManager
-from mewcode.tools import ToolRegistry
+from mewcode.tools import ToolRegistry, ToolView
 from mewcode.tools.base import Tool
 
 
@@ -27,26 +30,44 @@ async def test_teammate_registry_exposes_collaboration_tools(tmp_path, monkeypat
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
-    registry = await _build_teammate_registry(
+    runtime = await _open_teammate_runtime(
         work_dir=str(tmp_path),
         protocol="anthropic",
+        client=object(),
+        permission_checker=None,
+        context_window=128_000,
+        instructions_content="",
         team_manager=TeamManager(),
         team_name="alpha",
         agent_name="ann",
-        mcp_servers=[],
     )
+    registry = runtime.registry
     names = {t.name for t in registry.list_tools()}
 
     # 干活的工具、通用能力，以及队友之间协作要用的消息和共享任务板
     must_have = {
-        "ReadFile", "WriteFile", "EditFile", "Bash", "Glob", "Grep",
-        "ToolSearch", "SyntheticOutput", "EnterWorktree", "ExitWorktree",
-        "SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate",
+        "ReadFile",
+        "WriteFile",
+        "EditFile",
+        "Bash",
+        "Glob",
+        "Grep",
+        "ToolSearch",
+        "SyntheticOutput",
+        "EnterWorktree",
+        "ExitWorktree",
+        "SendMessage",
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
     }
     assert must_have <= names, f"队友工具集缺少 {must_have - names}"
 
     # 派人和建团队是 Lead 的职责，队友拿不到
     assert not ({"Agent", "TeamCreate", "TeamDelete"} & names)
+    await runtime.aclose()
+    assert registry.list_contributions() == ()
 
 
 class _StubTool(Tool):
@@ -68,7 +89,15 @@ def test_teammate_tools_block_team_management():
     from mewcode.teams.models import BackendType
 
     parent = ToolRegistry()
-    for name in ["ReadFile", "Bash", "EditFile", "Agent", "TeamCreate", "TeamDelete"]:
+    for name in [
+        "ReadFile",
+        "Bash",
+        "EditFile",
+        "Agent",
+        "TeamCreate",
+        "TeamDelete",
+        "TaskCreate",
+    ]:
         parent.register(_StubTool(name))
 
     for backend in (BackendType.IN_PROCESS.value, BackendType.TMUX.value):
@@ -82,7 +111,106 @@ def test_teammate_tools_block_team_management():
         )
         names = {t.name for t in reg.list_tools()}
 
+        assert isinstance(reg, ToolView)
         # 派人和建团队是 Lead 的职责，队友拿不到
         assert not ({"Agent", "TeamCreate", "TeamDelete"} & names), f"backend={backend}"
         # 协作工具照常注入
-        assert {"SendMessage", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate"} <= names
+        assert {
+            "SendMessage",
+            "TaskCreate",
+            "TaskGet",
+            "TaskList",
+            "TaskUpdate",
+        } <= names
+        assert not isinstance(reg.get("TaskCreate"), _StubTool)
+
+
+@pytest.mark.asyncio
+async def test_external_teammate_cancellation_closes_runtime(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    import mewcode.client
+    import mewcode.memory.instructions
+    import mewcode.teams.manager
+    import mewcode.teams.registry
+    import mewcode.teams.spawn_inprocess
+    from mewcode.__main__ import _run_teammate
+
+    provider = SimpleNamespace(
+        protocol="anthropic",
+        get_context_window=lambda: 128_000,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "mewcode.__main__.load_config",
+        lambda: SimpleNamespace(providers=[provider], mcp_servers=[]),
+    )
+    monkeypatch.setattr(mewcode.client, "create_client", lambda _provider: object())
+
+    async def resolve_context_window(_provider) -> None:
+        return None
+
+    monkeypatch.setattr(
+        mewcode.client,
+        "resolve_context_window",
+        resolve_context_window,
+    )
+    monkeypatch.setattr(
+        mewcode.memory.instructions,
+        "load_instructions",
+        lambda _work_dir: "",
+    )
+
+    class FakeTeamManager:
+        def get_team(self, _team_name):
+            return SimpleNamespace(lead_agent_id="lead")
+
+        def get_mailbox(self, _team_name):
+            return object()
+
+    monkeypatch.setattr(mewcode.teams.manager, "TeamManager", FakeTeamManager)
+    monkeypatch.setattr(
+        mewcode.teams.registry.AgentNameRegistry,
+        "instance",
+        classmethod(lambda _cls: SimpleNamespace(register=lambda *_args: None)),
+    )
+
+    runtime = SimpleNamespace(
+        agent=object(),
+        registry=ToolRegistry(),
+        closed=False,
+    )
+
+    async def close_runtime() -> None:
+        runtime.closed = True
+
+    runtime.aclose = close_runtime
+
+    async def open_runtime(**_kwargs):
+        return runtime
+
+    monkeypatch.setattr("mewcode.__main__._open_teammate_runtime", open_runtime)
+
+    class Handle:
+        def __init__(self) -> None:
+            async def cancelled() -> None:
+                raise asyncio.CancelledError
+
+            self.task = asyncio.create_task(cancelled())
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    handle = Handle()
+    monkeypatch.setattr(
+        mewcode.teams.spawn_inprocess,
+        "spawn_inprocess_teammate",
+        lambda **_kwargs: handle,
+    )
+
+    await _run_teammate("alpha", "ann")
+
+    assert handle.cancelled is True
+    assert runtime.closed is True

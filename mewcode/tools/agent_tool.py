@@ -15,6 +15,7 @@ from mewcode.tools.base import Tool, ToolResult
 if TYPE_CHECKING:
     from mewcode.agent import Agent
     from mewcode.agents.loader import AgentLoader
+    from mewcode.agents.parser import AgentDef
     from mewcode.agents.task_manager import TaskManager
     from mewcode.agents.trace import TraceManager
     from mewcode.client import LLMClient
@@ -538,8 +539,6 @@ class AgentTool(Tool):
         params: AgentToolParams,
         definition: AgentDef,
     ) -> LLMClient:
-        from mewcode.agents.parser import AgentDef
-
         model_override = params.model or (
             definition.model if definition.model != "inherit" else None
         )

@@ -37,6 +37,7 @@ from mewcode.runtime.events import (
     AgentEvent,
     CompactNotification,
     ErrorEvent,
+    EventSink,
     HookEvent,
     LoopComplete,
     MessageFinished,
@@ -310,6 +311,19 @@ class Agent:
             )
             for n in self.hook_engine.drain_notifications()
         ]
+
+    async def _run_hook(
+        self,
+        event: str,
+        emit: EventSink,
+        **kwargs: str | dict[str, Any],
+    ) -> None:
+        if self.hook_engine is None:
+            return
+        context = self._build_hook_context(event, **kwargs)
+        await self.hook_engine.run_hooks(event, context)
+        for hook_event in self._drain_hook_events():
+            await emit(hook_event)
 
     @property
     def active_run(self) -> AgentRun | None:

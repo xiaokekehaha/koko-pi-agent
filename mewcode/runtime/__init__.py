@@ -6,6 +6,7 @@ from mewcode.runtime.agent_loop import (
     RunStatus,
     StreamingEventAdapter,
 )
+from mewcode.runtime.agent_runtime import AgentRuntime, AgentRuntimeRequest
 from mewcode.runtime.events import (
     AgentEvent,
     CompactionFinished,
@@ -23,6 +24,7 @@ from mewcode.runtime.events import (
     RetryScheduled,
     RunFailed,
     RunFinished,
+    RunInputDelivered,
     RunResult,
     RunStarted,
     StreamText,
@@ -36,6 +38,15 @@ from mewcode.runtime.events import (
     TurnStarted,
     UsageEvent,
     UsageUpdated,
+)
+from mewcode.runtime.run_control import (
+    QueuedRunInput,
+    RunControl,
+    RunControlState,
+    RunInputClosedError,
+    RunInputKind,
+    RunInputReceipt,
+    TurnDirective,
 )
 from mewcode.runtime.tool_pipeline import (
     ApprovalAdapter,
@@ -51,6 +62,8 @@ __all__ = [
     "AgentEvent",
     "AgentLoop",
     "AgentRun",
+    "AgentRuntime",
+    "AgentRuntimeRequest",
     "ApprovalAdapter",
     "CompactNotification",
     "CompactionFinished",
@@ -66,11 +79,18 @@ __all__ = [
     "PermissionRequest",
     "PermissionRequested",
     "PermissionResponse",
+    "QueuedRunInput",
     "RetryEvent",
     "RetryScheduled",
     "RunCancellation",
+    "RunControl",
+    "RunControlState",
     "RunFailed",
     "RunFinished",
+    "RunInputDelivered",
+    "RunInputClosedError",
+    "RunInputKind",
+    "RunInputReceipt",
     "RunRequest",
     "RunResult",
     "RunStarted",
@@ -86,6 +106,7 @@ __all__ = [
     "ToolResultEvent",
     "ToolUseEvent",
     "TurnComplete",
+    "TurnDirective",
     "TurnFinished",
     "TurnStarted",
     "UsageEvent",

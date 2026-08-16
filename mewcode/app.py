@@ -9,7 +9,7 @@ import os
 import random
 import time as _time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rich.markup import escape
 from textual.app import App, ComposeResult
@@ -81,18 +81,36 @@ from mewcode.commands.handlers.tasks import create_tasks_command
 from mewcode.skills.executor import SkillExecutor
 from mewcode.skills.loader import SkillLoader
 from mewcode.commands.handlers.skill_register import register_skill_commands
+from mewcode.extensions import (
+    BuiltinRuntimeBindings,
+    ToolProfile,
+    create_builtin_extension_host,
+)
+from mewcode.runtime import (
+    AgentRuntime,
+    AgentRuntimeRequest,
+    QueuedRunInput,
+    RunFinished,
+    RunInputClosedError,
+    RunInputDelivered,
+    RunInputKind,
+    RunInputReceipt,
+)
 from rich.text import Text as RichText
 from textual.theme import Theme
-from mewcode.tools import ToolRegistry, create_default_registry
-from mewcode.tools.agent_tool import AgentTool
+from mewcode.tools import ToolRegistry
 from mewcode.tools.ask_user import AskUserEvent, AskUserTool
-from mewcode.tools.impl.tool_search import ToolSearchTool
 from mewcode.tools.install_skill import InstallSkillTool
 from mewcode.tools.load_skill import LoadSkill
 from mewcode.worktree.cleanup import start_stale_cleanup_task
 from mewcode.worktree.manager import WorktreeManager
 from mewcode.commands.handlers.worktree import create_worktree_command
 from mewcode.teammate_tree import TeammateTree
+
+if TYPE_CHECKING:
+    from mewcode.askuser_dialog import InlineAskUserWidget
+    from mewcode.permission_dialog import InlinePermissionWidget
+    from mewcode.plan_dialog import InlinePlanWidget
 
 import re
 
@@ -101,12 +119,22 @@ MAX_AT_REF_BYTES = 10240
 
 _AT_REF_RE = re.compile(r"@([\w./_\-]+(?:\.[\w]+)*)")
 
-_SKIP_DIRS = {".git", "node_modules", ".venv", "__pycache__", ".mewcode", "build", ".gradle"}
+_SKIP_DIRS = {
+    ".git",
+    "node_modules",
+    ".venv",
+    "__pycache__",
+    ".mewcode",
+    "build",
+    ".gradle",
+}
 
 
 def scan_files_for_at(prefix: str, work_dir: str, limit: int = 10) -> list[str]:
     matches: list[str] = []
-    base = os.path.join(work_dir, os.path.dirname(prefix)) if "/" in prefix else work_dir
+    base = (
+        os.path.join(work_dir, os.path.dirname(prefix)) if "/" in prefix else work_dir
+    )
     name_prefix = os.path.basename(prefix).lower()
     if not os.path.isdir(base):
         return matches
@@ -115,7 +143,11 @@ def scan_files_for_at(prefix: str, work_dir: str, limit: int = 10) -> list[str]:
             if entry in _SKIP_DIRS or entry.startswith("."):
                 continue
             if entry.lower().startswith(name_prefix):
-                rel = os.path.join(os.path.dirname(prefix), entry) if "/" in prefix else entry
+                rel = (
+                    os.path.join(os.path.dirname(prefix), entry)
+                    if "/" in prefix
+                    else entry
+                )
                 if os.path.isdir(os.path.join(base, entry)):
                     rel += "/"
                 matches.append(rel)
@@ -133,16 +165,20 @@ def expand_at_refs(text: str, work_dir: str) -> str:
         if not os.path.isfile(full_path):
             return m.group(0)
         try:
-            content = open(full_path, encoding="utf-8", errors="replace").read(MAX_AT_REF_BYTES)
+            content = open(full_path, encoding="utf-8", errors="replace").read(
+                MAX_AT_REF_BYTES
+            )
             return f"[File: {rel_path}]\n```\n{content}\n```"
         except Exception:
             return m.group(0)
+
     return _AT_REF_RE.sub(_replace, text)
 
 
 class ChatInput(TextArea):
     BINDINGS = [
         Binding("enter", "submit", "Submit", priority=True),
+        Binding("alt+enter", "submit_follow_up", "Follow up", priority=True),
         Binding("shift+enter", "newline", "Newline", priority=True),
         Binding("ctrl+j", "newline", "Newline", priority=True),
         Binding("tab", "complete", "Complete", priority=True),
@@ -152,9 +188,14 @@ class ChatInput(TextArea):
     ]
 
     class Submitted(TMessage):
-        def __init__(self, text: str) -> None:
+        def __init__(
+            self,
+            text: str,
+            delivery: RunInputKind = RunInputKind.STEERING,
+        ) -> None:
             super().__init__()
             self.text = text
+            self.delivery = delivery
 
     class TabComplete(TMessage):
         def __init__(self, text: str) -> None:
@@ -196,6 +237,12 @@ class ChatInput(TextArea):
             return None
 
     def action_submit(self) -> None:
+        self._submit(RunInputKind.STEERING)
+
+    def action_submit_follow_up(self) -> None:
+        self._submit(RunInputKind.FOLLOW_UP)
+
+    def _submit(self, delivery: RunInputKind) -> None:
         popup = self._popup()
         if popup is not None and popup.is_visible:
             selected = popup.get_selected()
@@ -205,7 +252,7 @@ class ChatInput(TextArea):
                 self._persist_entry(selected)
                 self._history_index = -1
                 self._history_draft = ""
-                self.post_message(self.Submitted(selected))
+                self.post_message(self.Submitted(selected, delivery))
                 self.clear()
                 return
         text = self.text.strip()
@@ -214,7 +261,7 @@ class ChatInput(TextArea):
             self._persist_entry(text)
             self._history_index = -1
             self._history_draft = ""
-            self.post_message(self.Submitted(text))
+            self.post_message(self.Submitted(text, delivery))
             self.clear()
 
     def action_newline(self) -> None:
@@ -304,7 +351,7 @@ class ChatInput(TextArea):
         at_idx = text.rfind("@")
         if at_idx < 0:
             return
-        after = text[at_idx + 1:]
+        after = text[at_idx + 1 :]
         if " " in after or "\n" in after:
             return
         if after:
@@ -403,8 +450,9 @@ def _format_detail(tool_name: str, arguments: dict[str, Any], output: str) -> st
 
 
 class ToolCallBlock(Static, can_focus=True):
-
-    def __init__(self, tool_name: str, arguments: dict[str, Any], **kwargs: Any) -> None:
+    def __init__(
+        self, tool_name: str, arguments: dict[str, Any], **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         self.tool_name = tool_name
         self._arguments = arguments
@@ -491,33 +539,114 @@ def _to_past_tense(verb: str) -> str:
 
 
 THINKING_VERBS = [
-    "Accomplishing", "Architecting", "Baking", "Beboppin'", "Befuddling",
-    "Bloviating", "Boogieing", "Boondoggling", "Bootstrapping", "Brewing",
-    "Calculating", "Canoodling", "Caramelizing", "Cascading", "Cerebrating",
-    "Choreographing", "Churning", "Coalescing", "Cogitating", "Combobulating",
-    "Composing", "Computing", "Concocting", "Considering", "Contemplating",
-    "Cooking", "Crafting", "Creating", "Crunching", "Crystallizing",
-    "Cultivating", "Deciphering", "Deliberating", "Dilly-dallying",
-    "Discombobulating", "Doodling", "Elucidating", "Enchanting", "Envisioning",
-    "Fermenting", "Finagling", "Flambéing", "Flibbertigibbeting", "Flummoxing",
-    "Forging", "Frolicking", "Gallivanting", "Garnishing", "Generating",
-    "Germinating", "Grooving", "Harmonizing", "Hatching", "Honking",
-    "Hullaballooing", "Ideating", "Imagining", "Improvising", "Incubating",
-    "Inferring", "Infusing", "Kneading", "Lollygagging", "Manifesting",
-    "Marinating", "Meandering", "Metamorphosing", "Mewing", "Moonwalking",
-    "Moseying", "Mulling", "Musing", "Noodling", "Orbiting",
-    "Orchestrating", "Percolating", "Philosophising", "Pondering",
-    "Pontificating", "Pouncing", "Purring", "Puzzling", "Razzle-dazzling",
-    "Ruminating", "Scampering", "Simmering", "Sketching", "Spelunking",
-    "Spinning", "Sprouting", "Synthesizing", "Thinking", "Tinkering",
-    "Transfiguring", "Transmuting", "Undulating", "Unfurling", "Unravelling",
-    "Vibing", "Wandering", "Whisking", "Working", "Wrangling", "Zigzagging",
+    "Accomplishing",
+    "Architecting",
+    "Baking",
+    "Beboppin'",
+    "Befuddling",
+    "Bloviating",
+    "Boogieing",
+    "Boondoggling",
+    "Bootstrapping",
+    "Brewing",
+    "Calculating",
+    "Canoodling",
+    "Caramelizing",
+    "Cascading",
+    "Cerebrating",
+    "Choreographing",
+    "Churning",
+    "Coalescing",
+    "Cogitating",
+    "Combobulating",
+    "Composing",
+    "Computing",
+    "Concocting",
+    "Considering",
+    "Contemplating",
+    "Cooking",
+    "Crafting",
+    "Creating",
+    "Crunching",
+    "Crystallizing",
+    "Cultivating",
+    "Deciphering",
+    "Deliberating",
+    "Dilly-dallying",
+    "Discombobulating",
+    "Doodling",
+    "Elucidating",
+    "Enchanting",
+    "Envisioning",
+    "Fermenting",
+    "Finagling",
+    "Flambéing",
+    "Flibbertigibbeting",
+    "Flummoxing",
+    "Forging",
+    "Frolicking",
+    "Gallivanting",
+    "Garnishing",
+    "Generating",
+    "Germinating",
+    "Grooving",
+    "Harmonizing",
+    "Hatching",
+    "Honking",
+    "Hullaballooing",
+    "Ideating",
+    "Imagining",
+    "Improvising",
+    "Incubating",
+    "Inferring",
+    "Infusing",
+    "Kneading",
+    "Lollygagging",
+    "Manifesting",
+    "Marinating",
+    "Meandering",
+    "Metamorphosing",
+    "Mewing",
+    "Moonwalking",
+    "Moseying",
+    "Mulling",
+    "Musing",
+    "Noodling",
+    "Orbiting",
+    "Orchestrating",
+    "Percolating",
+    "Philosophising",
+    "Pondering",
+    "Pontificating",
+    "Pouncing",
+    "Purring",
+    "Puzzling",
+    "Razzle-dazzling",
+    "Ruminating",
+    "Scampering",
+    "Simmering",
+    "Sketching",
+    "Spelunking",
+    "Spinning",
+    "Sprouting",
+    "Synthesizing",
+    "Thinking",
+    "Tinkering",
+    "Transfiguring",
+    "Transmuting",
+    "Undulating",
+    "Unfurling",
+    "Unravelling",
+    "Vibing",
+    "Wandering",
+    "Whisking",
+    "Working",
+    "Wrangling",
+    "Zigzagging",
 ]  # 共 105 个 TUI 快捷键动词
 
 
 class ToolGroupSummary(Static, can_focus=True):
-
-
     def __init__(self, count: int, total_elapsed: float, **kwargs: Any) -> None:
         label = f"● Done ({count} tool uses · {total_elapsed:.1f}s)  (ctrl+o to expand)"
         super().__init__(label, **kwargs)
@@ -538,13 +667,11 @@ class ToolGroupSummary(Static, can_focus=True):
         self._expanded = not self._expanded
         self._refresh_display()
 
-
     def on_click(self) -> None:
         self.toggle()
 
 
 class SubAgentBlock(Static, can_focus=True):
-
     def __init__(self, agent_type: str, description: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._agent_type = agent_type or "agent"
@@ -571,6 +698,7 @@ class SubAgentBlock(Static, can_focus=True):
 
     def _parse_stats(self, output: str) -> None:
         import re
+
         m = re.search(r"(\d+)\s+tool", output[:200])
         if m:
             self._tool_count = int(m.group(1))
@@ -620,7 +748,6 @@ class MewCodeApp(App):
         Binding("ctrl+o", "toggle_tool_blocks", "Toggle tools", priority=True),
     ]
 
-
     def __init__(
         self,
         providers: list[ProviderConfig],
@@ -647,11 +774,14 @@ class MewCodeApp(App):
         self._teammate_mode = teammate_mode
         self._enable_coordinator_mode = enable_coordinator_mode
         from mewcode.config import SandboxAppConfig
+
         self._sandbox_cfg: SandboxAppConfig = sandbox_config or SandboxAppConfig()
         self._ui_state_store = UIStateStore(ui_state_path)
+        self._provider_init_lock = asyncio.Lock()
         self.client: LLMClient | None = None
         self.conversation = ConversationManager()
-        self.registry: ToolRegistry = create_default_registry()
+        self.registry = ToolRegistry()
+        self.runtime: AgentRuntime | None = None
         self.agent: Agent | None = None
         self.mcp_manager: MCPManager | None = None
         self._mcp_init_task: asyncio.Task[None] | None = None
@@ -675,6 +805,7 @@ class MewCodeApp(App):
         self.skill_loader: SkillLoader | None = None
         self.skill_executor: SkillExecutor | None = None
         self._load_skill_tool: LoadSkill | None = None
+        self._install_skill_tool: InstallSkillTool | None = None
         self.agent_loader: AgentLoader | None = None
         self.task_manager: TaskManager = TaskManager()
         self.trace_manager: TraceManager = TraceManager()
@@ -726,11 +857,11 @@ class MewCodeApp(App):
             yield CompletionPopup()
         yield MascotOverlay(id="mascot-overlay")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self.register_theme(_MEWCODE_THEME)
         self.theme = "mewcode"
         if len(self.providers) == 1:
-            self._select_provider(self.providers[0])
+            await self._select_provider(self.providers[0])
         else:
             self.query_one("#chat-area").display = False
             self.query_one("#input-area").display = False
@@ -739,21 +870,42 @@ class MewCodeApp(App):
         if self._ui_state_store.mascot_open:
             self.query_one(MascotOverlay).show_mascot(focus_close=False)
 
-    def _select_provider(self, provider: ProviderConfig) -> None:
-        self._selected_provider = provider
+    async def _select_provider(self, provider: ProviderConfig) -> None:
+        async with self._provider_init_lock:
+            await self._select_provider_unlocked(provider)
+
+    async def _select_provider_unlocked(self, provider: ProviderConfig) -> None:
         try:
-            self.client = create_client(provider)
+            client = create_client(provider)
         except AuthenticationError as e:
             self._show_error(str(e))
             return
 
+        if self.runtime is not None:
+            await self._shutdown_mcp()
+            await self._shutdown_runtime()
+            for task in (
+                self._notification_check_task,
+                self._stale_cleanup_task,
+            ):
+                if task is not None and not task.done():
+                    task.cancel()
+            self._notification_check_task = None
+            self._stale_cleanup_task = None
+            if self.session is not None:
+                self.session.close()
+                self.session = None
+            self.command_registry = CommandRegistry()
+            register_all_commands(self.command_registry)
+            self.task_manager = TaskManager()
+            self.trace_manager = TraceManager()
+
+        self._selected_provider = provider
+        self.client = client
+
         work_dir = os.getcwd()
         home = Path.home()
-
-        # 根据配置决定是否启用 OS 级沙箱自动放行
-        sandbox_auto_allow = (
-            self._sandbox_cfg.enabled and self._sandbox_cfg.auto_allow
-        )
+        sandbox_auto_allow = self._sandbox_cfg.enabled and self._sandbox_cfg.auto_allow
         checker = PermissionChecker(
             detector=DangerousCommandDetector(),
             sandbox=PathSandbox(work_dir),
@@ -766,12 +918,15 @@ class MewCodeApp(App):
             sandbox_enabled=sandbox_auto_allow,
         )
 
-        # 如果配置启用了沙箱，为 Bash 工具挂载 OS 沙箱
+        bash_sandbox = None
+        bash_sandbox_config = None
         if self._sandbox_cfg.enabled:
             from mewcode.sandbox import SandboxConfig, create_sandbox
-            os_sandbox = create_sandbox()
-            if os_sandbox and os_sandbox.available():
-                sandbox_config = SandboxConfig(
+
+            candidate = create_sandbox()
+            if candidate and candidate.available():
+                bash_sandbox = candidate
+                bash_sandbox_config = SandboxConfig(
                     allow_write=[work_dir, "/tmp"],
                     deny_write=[
                         f"{work_dir}/.mewcode/config.yaml",
@@ -779,10 +934,6 @@ class MewCodeApp(App):
                     ],
                     network_enabled=self._sandbox_cfg.network_enabled,
                 )
-                bash_tool = self.registry.get("Bash")
-                if bash_tool:
-                    bash_tool.sandbox = os_sandbox
-                    bash_tool.sandbox_config = sandbox_config
 
         self._instructions_content = load_instructions(work_dir)
         self.memory_manager = MemoryManager(work_dir)
@@ -791,112 +942,132 @@ class MewCodeApp(App):
         self.session = self.session_manager.create()
 
         from mewcode.filehistory import FileHistory
+
         self.file_history = FileHistory(work_dir, self.session.session_id)
-        for tool in self.registry.list_tools():
-            if hasattr(tool, "file_history"):
-                tool.file_history = self.file_history
-
-        load_skill_tool = LoadSkill()
-        self.registry.register(load_skill_tool)
-        self._load_skill_tool = load_skill_tool
-
-        install_skill_tool = InstallSkillTool()
-        self.registry.register(install_skill_tool)
-        self._install_skill_tool = install_skill_tool
-
-        self.registry.register(
-            ToolSearchTool(self.registry, protocol=provider.protocol)
-        )
-        self.registry.register(AskUserTool())
-
-        from mewcode.tools.exit_plan_mode import ExitPlanModeTool
-        self._exit_plan_tool = ExitPlanModeTool()
-        self.registry.register(self._exit_plan_tool)
-
-        self.agent = Agent(
-            client=self.client,
-            registry=self.registry,
-            protocol=provider.protocol,
-            work_dir=work_dir,
-            permission_checker=checker,
-            context_window=provider.get_context_window(),
-            instructions_content=self._instructions_content,
-            memory_manager=self.memory_manager,
-            hook_engine=self.hook_engine,
-        )
-        self.agent.file_history = self.file_history
-        self.agent.session_id = self.session.session_id
-
-        self._exit_plan_tool._is_plan_mode = lambda: self.agent.plan_mode
-        self._exit_plan_tool._plan_exists = lambda: self.agent._get_plan_path().exists()
-
-        # Layer 2: 在后台异步拉取模型的 context window，不阻塞启动流程。
-        # agent 已经有一个同步解析的窗口值（来自配置 / 映射表 / 默认值）；
-        # 如果异步拉取成功，就原地升级为更准确的值。
-        self.run_worker(
-            self._resolve_context_window(provider), exclusive=False
-        )
-
         self.skill_loader = SkillLoader(work_dir)
         self.skill_loader.load_all()
 
-        load_skill_tool.set_loader(self.skill_loader)
-        load_skill_tool.set_agent(self.agent)
-
-        install_skill_tool.set_loader(self.skill_loader)
-
-        self.skill_executor = SkillExecutor(
-            agent=self.agent,
-            client=self.client,
-            protocol=provider.protocol,
-        )
-        load_skill_tool.set_executor(self.skill_executor)
-
-        catalog = self.skill_loader.get_catalog()
-        if catalog:
-            lines = [
-                "You can use the following Skills:",
-                "",
-            ]
-            for name, desc in catalog:
-                lines.append(f"- {name}: {desc}")
-            lines.append("")
-            lines.append(
-                "If the user's request matches a Skill, call LoadSkill to activate it."
-            )
-            self.agent.set_skill_catalog("\n".join(lines))
-
-        register_skill_commands(
-            self.command_registry, self.skill_loader, self.skill_executor
-        )
-
-        # 安装新 skill 后重新注册斜杠命令，让 /<new-skill> 立即可用
-        def _on_skill_installed(name: str) -> None:
-            register_skill_commands(
-                self.command_registry, self.skill_loader, self.skill_executor
-            )
-
-        install_skill_tool.set_on_installed(_on_skill_installed)
-
-        # --- Worktree 系统初始化 ---
         from mewcode.config import WorktreeConfig
+
         wt_cfg = self._worktree_config or WorktreeConfig()
         self.worktree_manager = WorktreeManager(
             repo_root=work_dir,
             symlink_directories=wt_cfg.symlink_directories,
         )
         restored = self.worktree_manager.restore_session()
-        if restored:
-            self.agent.work_dir = restored.worktree_path
+
+        self.agent_loader = AgentLoader(
+            work_dir, enable_verification=self._enable_verification_agent
+        )
+        self.agent_loader.load_all()
+
+        from mewcode.teams.manager import TeamManager
+
+        self.team_manager = TeamManager(
+            worktree_manager=self.worktree_manager,
+            trace_manager=self.trace_manager,
+        )
+
+        def on_skill_installed(_name: str) -> None:
+            assert self.skill_loader is not None
+            assert self.skill_executor is not None
+            register_skill_commands(
+                self.command_registry,
+                self.skill_loader,
+                self.skill_executor,
+            )
+
+        def create_agent(registry: ToolRegistry) -> Agent:
+            agent = Agent(
+                client=self.client,
+                registry=registry,
+                protocol=provider.protocol,
+                work_dir=work_dir,
+                permission_checker=checker,
+                context_window=provider.get_context_window(),
+                instructions_content=self._instructions_content,
+                memory_manager=self.memory_manager,
+                hook_engine=self.hook_engine,
+            )
+            agent.file_history = self.file_history
+            agent.session_id = self.session.session_id
+            if restored:
+                agent.work_dir = restored.worktree_path
+            return agent
+
+        def create_bindings(
+            agent: Agent,
+            registry: ToolRegistry,
+        ) -> BuiltinRuntimeBindings:
+            self.skill_executor = SkillExecutor(
+                agent=agent,
+                client=self.client,
+                protocol=provider.protocol,
+            )
+            return BuiltinRuntimeBindings(
+                agent=agent,
+                registry=registry,
+                protocol=provider.protocol,
+                file_history=self.file_history,
+                agent_loader=self.agent_loader,
+                task_manager=self.task_manager,
+                trace_manager=self.trace_manager,
+                provider_config=provider,
+                worktree_manager=self.worktree_manager,
+                team_manager=self.team_manager,
+                skill_loader=self.skill_loader,
+                skill_executor=self.skill_executor,
+                on_skill_installed=on_skill_installed,
+                bash_sandbox=bash_sandbox,
+                bash_sandbox_config=bash_sandbox_config,
+                enable_fork=self._enable_fork,
+                teammate_mode=self._teammate_mode,
+                is_interactive=True,
+                enable_coordinator_mode=self._enable_coordinator_mode,
+            )
+
+        self.runtime = await AgentRuntime.open(
+            AgentRuntimeRequest(
+                profile=ToolProfile.TUI_LEAD,
+                work_dir=work_dir,
+                agent_factory=create_agent,
+                bindings_factory=create_bindings,
+            ),
+            extension_host=create_builtin_extension_host(),
+        )
+        self.agent = self.runtime.agent
+        self.registry = self.runtime.registry
+        self._load_skill_tool = self.registry.get("LoadSkill")
+        self._install_skill_tool = self.registry.get("InstallSkill")
+        self._exit_plan_tool = self.registry.get("ExitPlanMode")
+
+        self.run_worker(
+            self._resolve_context_window(provider),
+            exclusive=False,
+        )
+
+        catalog = self.skill_loader.get_catalog()
+        if catalog:
+            lines = ["You can use the following Skills:", ""]
+            for name, desc in catalog:
+                lines.append(f"- {name}: {desc}")
+            lines.extend(
+                [
+                    "",
+                    "If the user's request matches a Skill, call LoadSkill to activate it.",
+                ]
+            )
+            self.agent.set_skill_catalog("\n".join(lines))
+
+        assert self.skill_executor is not None
+        register_skill_commands(
+            self.command_registry,
+            self.skill_loader,
+            self.skill_executor,
+        )
 
         wt_command = create_worktree_command(self.worktree_manager)
         self.command_registry.register_sync(wt_command)
-
-        from mewcode.tools.enter_worktree import EnterWorktreeTool
-        from mewcode.tools.exit_worktree import ExitWorktreeTool
-        self.registry.register(EnterWorktreeTool(worktree_manager=self.worktree_manager))
-        self.registry.register(ExitWorktreeTool(worktree_manager=self.worktree_manager))
-
         self._stale_cleanup_task = asyncio.create_task(
             start_stale_cleanup_task(
                 self.worktree_manager,
@@ -904,46 +1075,6 @@ class MewCodeApp(App):
                 wt_cfg.stale_cutoff_hours,
             )
         )
-
-        # --- 子 agent 系统初始化 ---
-        self.agent_loader = AgentLoader(
-            work_dir, enable_verification=self._enable_verification_agent
-        )
-        self.agent_loader.load_all()
-
-        # --- Agent 团队系统初始化 ---
-        from mewcode.teams.manager import TeamManager
-        from mewcode.tools.team_create import TeamCreateTool
-        from mewcode.tools.team_delete import TeamDeleteTool
-
-        self.team_manager = TeamManager(worktree_manager=self.worktree_manager, trace_manager=self.trace_manager)
-
-        agent_tool = AgentTool(
-            agent_loader=self.agent_loader,
-            task_manager=self.task_manager,
-            trace_manager=self.trace_manager,
-            parent_agent=self.agent,
-            enable_fork=self._enable_fork,
-            provider_config=provider,
-            worktree_manager=self.worktree_manager,
-            team_manager=self.team_manager,
-        )
-        self.registry.register(agent_tool)
-
-        team_create_tool = TeamCreateTool(
-            team_manager=self.team_manager,
-            parent_agent=self.agent,
-            teammate_mode=self._teammate_mode,
-            is_interactive=True,
-            enable_coordinator_mode=self._enable_coordinator_mode,
-        )
-        self.registry.register(team_create_tool)
-
-        team_delete_tool = TeamDeleteTool(
-            team_manager=self.team_manager,
-            parent_agent=self.agent,
-        )
-        self.registry.register(team_delete_tool)
 
         agent_catalog = self.agent_loader.list_agents()
         if agent_catalog:
@@ -956,36 +1087,35 @@ class MewCodeApp(App):
             for agent_type, when_to_use in agent_catalog:
                 lines.append(f"- **{agent_type}**: {when_to_use}")
             if self._enable_fork:
-                lines.append("")
-                lines.append(
-                    "Leave subagent_type empty to fork the current conversation "
-                    "(inherits full dialog history)."
+                lines.extend(
+                    [
+                        "",
+                        "Leave subagent_type empty to fork the current conversation "
+                        "(inherits full dialog history).",
+                    ]
                 )
-            lines.append("")
-            lines.append(
-                "IMPORTANT: Sub-agents run in the background. "
-                "After calling the Agent tool, you will get a task ID immediately. "
-                "Do NOT wait, sleep, or poll for the result. "
-                "Simply report the task ID to the user and end your turn. "
-                "The system will automatically notify when the task completes."
+            lines.extend(
+                [
+                    "",
+                    "IMPORTANT: Sub-agents run in the background. "
+                    "After calling the Agent tool, you will get a task ID immediately. "
+                    "Do NOT wait, sleep, or poll for the result. "
+                    "Simply report the task ID to the user and end your turn. "
+                    "The system will automatically notify when the task completes.",
+                ]
             )
-            self.agent.set_agent_catalog("\n".join(lines), catalog_list=agent_catalog)
+            self.agent.set_agent_catalog(
+                "\n".join(lines),
+                catalog_list=agent_catalog,
+            )
 
-        tasks_cmd = create_tasks_command(self.task_manager)
-        self.command_registry.register_sync(tasks_cmd)
-
+        self.command_registry.register_sync(create_tasks_command(self.task_manager))
         from mewcode.commands.handlers.trace import create_trace_command
-        trace_cmd = create_trace_command(self.trace_manager, self.agent.agent_id)
-        self.command_registry.register_sync(trace_cmd)
 
-        # --- 协调者模式初始化（工具已注册，激活推迟到 TeamCreate 时） ---
-        from mewcode.tools.synthetic_output import SyntheticOutputTool
-        from mewcode.tools.task_stop import TaskStopTool
+        self.command_registry.register_sync(
+            create_trace_command(self.trace_manager, self.agent.agent_id)
+        )
 
-        self.registry.register(SyntheticOutputTool())
-        self.registry.register(TaskStopTool(team_manager=self.team_manager))
-
-        # coordinator 模式由配置决定，开了就从第一轮起收窄工具集
         if self._enable_coordinator_mode:
             from mewcode.agents.tool_filter import apply_coordinator_filter
 
@@ -996,15 +1126,14 @@ class MewCodeApp(App):
         if self.hook_engine:
             asyncio.ensure_future(
                 self.hook_engine.run_hooks(
-                    "startup", HookContext(event_name="startup")
+                    "startup",
+                    HookContext(event_name="startup"),
                 )
             )
-
         if self._mcp_server_configs:
             self._mcp_init_task = asyncio.create_task(self._init_mcp())
 
         self.query_one("#model-label", Static).update(provider.model)
-        work_dir = os.getcwd()
         self.query_one("#title-bar", Static).update(
             self._make_banner(provider.model, work_dir)
         )
@@ -1027,20 +1156,16 @@ class MewCodeApp(App):
         )
 
     async def _resolve_context_window(self, provider: ProviderConfig) -> None:
-        """Layer 2 后台 worker：异步拉取模型的 context window，
-        拉到就原地升级 agent 的窗口值。
-
-        尽力而为 — resolve_context_window 不会抛异常；如果拉不到，
-        agent 继续使用同步解析得到的窗口值。
-        """
         await resolve_context_window(provider)
         if self.agent is not None:
             self.agent.context_window = provider.get_context_window()
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+    async def on_option_list_option_selected(
+        self, event: OptionList.OptionSelected
+    ) -> None:
         if event.option_list.id == "provider-list":
             provider = self.providers[event.option_index]
-            self._select_provider(provider)
+            await self._select_provider(provider)
 
     # -----------------------------------------------------------------
     # UIController 协议实现
@@ -1050,9 +1175,69 @@ class MewCodeApp(App):
         self._show_system_message(text)
 
     def send_user_message(self, text: str) -> None:
-        if self._streaming or self.agent is None:
+        if self.agent is None:
             return
-        self._agent_task = asyncio.create_task(self._send_message(text))
+        asyncio.create_task(self._dispatch_command(text))
+
+    async def _render_queued_input(self, receipt: RunInputReceipt) -> None:
+        chat = self.query_one("#chat-area", VerticalScroll)
+        user_row = Vertical(classes="user-row")
+        await chat.mount(user_row)
+        user_rich = RichText()
+        user_rich.append("❯ ", style="bold color(80)")
+        user_rich.append(receipt.item.text, style="bold color(255)")
+        user_rich.append(
+            f"  [{receipt.item.kind.value} queued]",
+            style="dim color(242)",
+        )
+        await user_row.mount(Static(user_rich, classes="message user-message"))
+        self.call_after_refresh(chat.scroll_end, animate=False)
+
+    def _restore_undelivered_inputs(
+        self,
+        inputs: tuple[QueuedRunInput, ...],
+    ) -> None:
+        if not inputs:
+            return
+        input_widget = self.query_one("#chat-input", ChatInput)
+        restored = "\n".join(item.text for item in inputs)
+        existing = input_widget.text.strip()
+        input_widget.clear()
+        input_widget.insert("\n".join(part for part in (restored, existing) if part))
+        self._show_system_message(
+            f"Restored {len(inputs)} undelivered input(s) to the editor"
+        )
+
+    async def _queue_active_input(
+        self,
+        text: str,
+        delivery: RunInputKind,
+    ) -> bool:
+        runtime = self.runtime
+        if runtime is None or not self._streaming:
+            return False
+        try:
+            if delivery is RunInputKind.FOLLOW_UP:
+                receipt = runtime.follow_up_active_run(text)
+            else:
+                receipt = runtime.steer_active_run(text)
+        except RunInputClosedError:
+            receipt = None
+        except RuntimeError as exc:
+            self._show_error(str(exc))
+            return True
+        if receipt is not None:
+            await self._render_queued_input(receipt)
+            return True
+
+        running_task = self._agent_task
+        if (
+            running_task is not None
+            and running_task is not asyncio.current_task()
+            and not running_task.done()
+        ):
+            await asyncio.shield(running_task)
+        return False
 
     def set_plan_mode(self, enabled: bool) -> None:
         if self.agent is None:
@@ -1098,7 +1283,6 @@ class MewCodeApp(App):
     # -----------------------------------------------------------------
     # 命令分发
     # -----------------------------------------------------------------
-
 
     def _build_command_context(self, args: str) -> CommandContext:
         return CommandContext(
@@ -1147,11 +1331,17 @@ class MewCodeApp(App):
         chat = self.query_one("#chat-area", VerticalScroll)
         chat.remove_children()
 
-    async def _dispatch_command(self, text: str) -> None:
+    async def _dispatch_command(
+        self,
+        text: str,
+        delivery: RunInputKind = RunInputKind.STEERING,
+    ) -> None:
         name, args, is_command = parse_command(text)
 
         if not is_command:
-            if self._streaming or self.agent is None:
+            if self.agent is None:
+                return
+            if self._streaming and await self._queue_active_input(text, delivery):
                 return
             self._agent_task = asyncio.create_task(self._send_message(text))
             return
@@ -1189,16 +1379,7 @@ class MewCodeApp(App):
 
     async def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
         text = event.text.strip()
-        if self._streaming and not text.startswith("/"):
-            if self._agent_task and not self._agent_task.done():
-                self._agent_task.cancel()
-                try:
-                    await self._agent_task
-                except (asyncio.CancelledError, Exception):
-                    pass
-            self._finish_streaming()
-            self._show_system_message("(response interrupted)")
-        await self._dispatch_command(text)
+        await self._dispatch_command(text, event.delivery)
 
     def on_chat_input_tab_complete(self, event: ChatInput.TabComplete) -> None:
         matches = complete(self.command_registry, event.text)
@@ -1273,7 +1454,10 @@ class MewCodeApp(App):
             parent = summary.parent
             if parent:
                 for child in parent.children:
-                    if isinstance(child, ToolCallBlock) and child.tool_name in COLLAPSIBLE_TOOLS:
+                    if (
+                        isinstance(child, ToolCallBlock)
+                        and child.tool_name in COLLAPSIBLE_TOOLS
+                    ):
                         child.display = summary._expanded
 
         for block in self.query(SubAgentBlock):
@@ -1293,16 +1477,24 @@ class MewCodeApp(App):
             return
         if self._agent_task and not self._agent_task.done():
             if self._subagent_task and not self._subagent_task.done():
-                task_id = self.task_manager.adopt_running(
-                    self._subagent_task, "background task"
-                ) if hasattr(self.task_manager, 'adopt_running') else None
+                task_id = (
+                    self.task_manager.adopt_running(
+                        self._subagent_task, "background task"
+                    )
+                    if hasattr(self.task_manager, "adopt_running")
+                    else None
+                )
                 if task_id:
                     self._show_system_message(
                         f"Task moved to background (id: {task_id})"
                     )
                     return
-            if self.agent is not None:
-                self.agent.cancel_active_run()
+            if self.runtime is not None:
+                try:
+                    if self.runtime.cancel_active_run():
+                        return
+                except RuntimeError:
+                    return
             self._agent_task.cancel()
 
     async def _prefetch_relevant_memories(self, query: str) -> str:
@@ -1358,6 +1550,7 @@ class MewCodeApp(App):
         self.skill_loader.reload()
         if self.command_registry is not None:
             from mewcode.commands.handlers.skill_register import register_skill_commands
+
             register_skill_commands(
                 self.command_registry, self.skill_loader, self.skill_executor
             )
@@ -1390,14 +1583,17 @@ class MewCodeApp(App):
             text = expand_at_refs(text, self.agent.work_dir)
 
         # Start memory recall prefetch before UI work.
-        prefetch_task = asyncio.create_task(
-            self._prefetch_relevant_memories(text)
-        ) if text else None
+        prefetch_task = (
+            asyncio.create_task(self._prefetch_relevant_memories(text))
+            if text
+            else None
+        )
 
         if text:
             user_row = Vertical(classes="user-row")
             await chat.mount(user_row)
             from rich.text import Text as RichText
+
             user_rich = RichText()
             user_rich.append("❯ ", style="bold color(80)")
             user_rich.append(text, style="bold color(255)")
@@ -1418,7 +1614,28 @@ class MewCodeApp(App):
             self.agent.memory_recall_task = prefetch_task
             self.agent._memory_recall_consumed = False
 
-        history_cursor = len(self.conversation.history)
+        history_anchor = (
+            self.conversation.history[-1] if self.conversation.history else None
+        )
+
+        def flush_history_tail() -> None:
+            nonlocal history_anchor
+            if self.session is None:
+                return
+            start = 0
+            if history_anchor is not None:
+                start = next(
+                    (
+                        index + 1
+                        for index, message in enumerate(self.conversation.history)
+                        if message is history_anchor
+                    ),
+                    len(self.conversation.history),
+                )
+            for message in self.conversation.history[start:]:
+                self.session.append(message)
+            if self.conversation.history:
+                history_anchor = self.conversation.history[-1]
 
         # 准备 AI 回复区域
         ai_row = Vertical(classes="ai-row")
@@ -1462,6 +1679,7 @@ class MewCodeApp(App):
                         await ai_row.mount(streaming_label)
                     accumulated_text += event.text
                     from rich.text import Text as RichText
+
                     t = RichText()
                     t.append("● ", style="bold color(99)")
                     t.append(accumulated_text)
@@ -1476,7 +1694,10 @@ class MewCodeApp(App):
                         if streaming_label is not None:
                             await streaming_label.remove()
                         from rich.text import Text as RichText
-                        prefix = Static(RichText("●  ", style="bold color(99)"), classes="message")
+
+                        prefix = Static(
+                            RichText("●  ", style="bold color(99)"), classes="message"
+                        )
                         await ai_row.mount(prefix)
                         md = Markdown(accumulated_text, classes="message ai-message")
                         await ai_row.mount(md)
@@ -1512,17 +1733,19 @@ class MewCodeApp(App):
                     self.call_after_refresh(chat.scroll_end, animate=False)
 
                     ask_tool = self.registry.get("AskUserQuestion")
-                    if ask_tool and isinstance(ask_tool, AskUserTool) and ask_tool._pending_event:
+                    if (
+                        ask_tool
+                        and isinstance(ask_tool, AskUserTool)
+                        and ask_tool._pending_event
+                    ):
                         await self._handle_askuser(ask_tool._pending_event)
 
                 elif isinstance(event, TurnComplete):
-                    if self.session:
-                        for msg in self.conversation.history[history_cursor:]:
-                            self.session.append(msg)
-                        history_cursor = len(self.conversation.history)
+                    flush_history_tail()
 
                     collapsible = [
-                        (tid, blk) for tid, blk in tool_blocks.items()
+                        (tid, blk)
+                        for tid, blk in tool_blocks.items()
                         if isinstance(blk, ToolCallBlock)
                         and blk.tool_name in COLLAPSIBLE_TOOLS
                         and not blk._loading
@@ -1530,7 +1753,8 @@ class MewCodeApp(App):
                     if len(collapsible) >= 2:
                         total_elapsed = sum(b._elapsed for _, b in collapsible)
                         summary = ToolGroupSummary(
-                            len(collapsible), total_elapsed,
+                            len(collapsible),
+                            total_elapsed,
                             classes="tool-block tool-group-summary",
                         )
                         for _, blk in collapsible:
@@ -1538,12 +1762,18 @@ class MewCodeApp(App):
                         await ai_row.mount(summary)
 
                     tool_blocks.clear()
-                    ai_row = Vertical(classes="ai-row")
-                    await chat.mount(ai_row)
-                    streaming_label = Static("", classes="message ai-message")
-                    await ai_row.mount(streaming_label)
-                    accumulated_text = ""
-                    self.call_after_refresh(chat.scroll_end, animate=False)
+                    if event.will_continue:
+                        ai_row = Vertical(classes="ai-row")
+                        await chat.mount(ai_row)
+                        streaming_label = Static("", classes="message ai-message")
+                        await ai_row.mount(streaming_label)
+                        accumulated_text = ""
+                        self.call_after_refresh(chat.scroll_end, animate=False)
+
+                elif isinstance(event, RunInputDelivered):
+                    self._show_system_message(
+                        f"Delivered {len(event.input_ids)} {event.kind.value} input(s)"
+                    )
 
                 elif isinstance(event, UsageEvent):
                     pass  # token 展示已移除
@@ -1562,7 +1792,11 @@ class MewCodeApp(App):
                     # 刷盘时只追加 boundary 之后的新消息，不会把已压缩的
                     # 前缀作为普通记录重复写入。
                     self._persist_compact_boundary(event)
-                    history_cursor = len(self.conversation.history)
+                    history_anchor = (
+                        self.conversation.history[-1]
+                        if self.conversation.history
+                        else None
+                    )
 
                 elif isinstance(event, ErrorEvent):
                     # 保留错误前已输出的流式文本
@@ -1582,20 +1816,18 @@ class MewCodeApp(App):
                     )
                     await ai_row.mount(done_label)
                     if self.session:
-                        for msg in self.conversation.history[history_cursor:]:
-                            self.session.append(msg)
-                        history_cursor = len(self.conversation.history)
+                        flush_history_tail()
                         self.session.meta.total_tokens = (
                             self.agent.total_input_tokens
                             + self.agent.total_output_tokens
                         )
-                        asyncio.ensure_future(
-                            self._update_session_summary()
-                        )
+                        asyncio.ensure_future(self._update_session_summary())
                     if self.agent.plan_mode:
-                        asyncio.ensure_future(
-                            self._show_plan_approval()
-                        )
+                        asyncio.ensure_future(self._show_plan_approval())
+
+                elif isinstance(event, RunFinished):
+                    flush_history_tail()
+                    self._restore_undelivered_inputs(event.result.undelivered_inputs)
 
             # 收尾：渲染剩余的累积文本
             if accumulated_text and streaming_label is not None:
@@ -1638,7 +1870,7 @@ class MewCodeApp(App):
                 f"{status_icon} 后台任务完成: [{task.id}] {task.name} — {task.status}"
             )
 
-            if hasattr(self, 'team_manager'):
+            if hasattr(self, "team_manager"):
                 self.team_manager.on_teammate_completed(task.agent.agent_id)
 
         self._agent_task = asyncio.create_task(
@@ -1715,7 +1947,9 @@ class MewCodeApp(App):
             # 构建退出提示并标记已退出 Plan Mode
             exit_msg = build_plan_mode_exit_reminder(str(plan_path), plan_exists)
             self._has_exited_plan_mode = True
-            execute_text = exit_msg + "\n\nUser has approved your plan. You can now start coding."
+            execute_text = (
+                exit_msg + "\n\nUser has approved your plan. You can now start coding."
+            )
             if plan_content:
                 execute_text += "\n\nApproved Plan:\n" + plan_content
             self.send_user_message(execute_text)
@@ -1725,7 +1959,9 @@ class MewCodeApp(App):
             # 构建退出提示并标记已退出 Plan Mode
             exit_msg = build_plan_mode_exit_reminder(str(plan_path), plan_exists)
             self._has_exited_plan_mode = True
-            execute_text = exit_msg + "\n\nUser has approved your plan. You can now start coding."
+            execute_text = (
+                exit_msg + "\n\nUser has approved your plan. You can now start coding."
+            )
             if plan_content:
                 execute_text += "\n\nApproved Plan:\n" + plan_content
             self.send_user_message(execute_text)
@@ -1803,7 +2039,9 @@ class MewCodeApp(App):
             )
             if self._spinner_idx % 5 == 0:
                 try:
-                    self.query_one("#chat-area", VerticalScroll).scroll_end(animate=False)
+                    self.query_one("#chat-area", VerticalScroll).scroll_end(
+                        animate=False
+                    )
                 except Exception:
                     pass
 
@@ -1851,7 +2089,9 @@ class MewCodeApp(App):
         try:
             label = self.query_one("#teammates-label", Static)
             if count > 0:
-                label.update(f"[cyan]● {count} teammate{'s' if count != 1 else ''}[/cyan]  ")
+                label.update(
+                    f"[cyan]● {count} teammate{'s' if count != 1 else ''}[/cyan]  "
+                )
             else:
                 label.update("")
         except Exception:
@@ -1959,9 +2199,7 @@ class MewCodeApp(App):
         mcp_tools = tools_after - tools_before
         server_count = len(connect_result.servers)
         if server_count > 0:
-            self._mcp_server_info = (
-                f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
-            )
+            self._mcp_server_info = f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
         if server_count > 0 and mcp_tools > 0:
             # 构建 MCP 指令，从 InitializeResult 提取 instructions
             parts = []
@@ -1973,7 +2211,8 @@ class MewCodeApp(App):
                 else:
                     # 回退：列出该服务器注册的工具名
                     tool_names = [
-                        t.name for t in self.registry.list_tools()
+                        t.name
+                        for t in self.registry.list_tools()
                         if t.name.startswith(f"mcp__{srv_info.name}__")
                     ]
                     if tool_names:
@@ -1982,8 +2221,7 @@ class MewCodeApp(App):
             self._mcp_instructions = (
                 "# MCP Server Instructions\n\n"
                 "The following MCP servers have provided instructions "
-                "for how to use their tools and resources:\n\n"
-                + "\n\n".join(parts)
+                "for how to use their tools and resources:\n\n" + "\n\n".join(parts)
             )
 
     async def _shutdown_mcp(self) -> None:
@@ -1998,12 +2236,26 @@ class MewCodeApp(App):
             await self.mcp_manager.shutdown()
             self.mcp_manager = None
 
+    async def _shutdown_runtime(self) -> None:
+        runtime = self.runtime
+        if runtime is None:
+            return
+        await runtime.aclose()
+        self.runtime = None
+
     # -----------------------------------------------------------------
     # 退出
     # -----------------------------------------------------------------
 
     async def action_handle_ctrl_c(self) -> None:
         if self._streaming:
+            if self.runtime is not None:
+                try:
+                    if self.runtime.cancel_active_run():
+                        self._show_system_message("(response interrupted)")
+                        return
+                except RuntimeError:
+                    return
             if self._agent_task and not self._agent_task.done():
                 self._agent_task.cancel()
             self._show_system_message("(response interrupted)")
@@ -2025,27 +2277,30 @@ class MewCodeApp(App):
             tasks: list[asyncio.Task] = []
 
             if self.agent and self.agent.memory_manager:
-                tasks.append(asyncio.create_task(
-                    self.agent._extract_memories(self.conversation)
-                ))
+                tasks.append(
+                    asyncio.create_task(self.agent._extract_memories(self.conversation))
+                )
             if self.hook_engine:
-                tasks.append(asyncio.create_task(
-                    self.hook_engine.run_hooks(
-                        "shutdown", HookContext(event_name="shutdown")
+                tasks.append(
+                    asyncio.create_task(
+                        self.hook_engine.run_hooks(
+                            "shutdown", HookContext(event_name="shutdown")
+                        )
                     )
-                ))
-            tasks.append(asyncio.create_task(self._shutdown_mcp()))
-
+                )
             if tasks:
                 await asyncio.wait(tasks, timeout=3.0)
                 for t in tasks:
                     if not t.done():
                         t.cancel()
 
+            await self._shutdown_mcp()
+            await self._shutdown_runtime()
+
             if self._stale_cleanup_task and not self._stale_cleanup_task.done():
                 self._stale_cleanup_task.cancel()
 
-            if hasattr(self, 'team_manager'):
+            if hasattr(self, "team_manager"):
                 for name in list(self.team_manager._teams):
                     try:
                         team = self.team_manager._teams[name]
@@ -2095,7 +2350,9 @@ class MewCodeApp(App):
                 label.update(f"[{color}]{display}[/{color}]  (shift+tab to cycle)")
         try:
             model_label = self.query_one("#model-label", Static)
-            model_text = self._selected_provider.model if self._selected_provider else ""
+            model_text = (
+                self._selected_provider.model if self._selected_provider else ""
+            )
             if self._mcp_connecting:
                 model_label.update(f"[yellow]MCP connecting…[/yellow]  {model_text}")
             else:

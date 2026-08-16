@@ -17,8 +17,12 @@ from mewcode.runtime import (
     InteractiveApprovalAdapter,
     RunFailed,
     RunFinished,
+    RunInputClosedError,
+    RunInputDelivered,
+    RunInputKind,
     RunStarted,
     RunStatus,
+    TurnComplete,
 )
 from mewcode.tools import ToolRegistry
 from mewcode.tools.base import (
@@ -45,6 +49,32 @@ class _ScriptedClient(LLMClient):
         response = self._responses[self._index]
         self._index += 1
         for event in response:
+            yield event
+
+
+class _GatedScriptedClient(_ScriptedClient):
+    def __init__(self, responses: list[list[StreamEvent]]) -> None:
+        super().__init__(responses)
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.snapshots: list[list[tuple[str, str]]] = []
+
+    async def stream(
+        self,
+        conversation: ConversationManager,
+        system: str = "",
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamEvent]:
+        self.snapshots.append(
+            [(message.role, message.content) for message in conversation.history]
+        )
+        index = self._index
+        response = self._responses[index]
+        self._index += 1
+        for event in response:
+            if index == 0 and isinstance(event, StreamEnd):
+                self.entered.set()
+                await self.release.wait()
             yield event
 
 
@@ -503,3 +533,298 @@ async def test_cancelled_tool_is_paired_and_no_run_task_remains() -> None:
     assert tool_results[0].tool_use_id == "slow"
     assert tool_results[0].is_error is True
     assert "cancelled" in tool_results[0].content.lower()
+
+
+@pytest.mark.asyncio
+async def test_before_first_turn_steering_is_visible_to_first_model_call() -> None:
+    client = _GatedScriptedClient(
+        [[TextDelta("done"), StreamEnd("end_turn", 1, 1)]]
+    )
+    client.release.set()
+    agent = Agent(client, ToolRegistry(), "anthropic")
+    conversation = ConversationManager()
+    events = []
+
+    async def sink(event) -> None:
+        events.append(event)
+
+    run = agent.start_run(conversation, sink)
+    receipt = run.steer("before first turn")
+    result = await run.wait_until_idle()
+
+    assert result.status == "completed"
+    assert ("user", "before first turn") in client.snapshots[0]
+    delivered = [event for event in events if isinstance(event, RunInputDelivered)]
+    assert [(event.kind, event.input_ids) for event in delivered] == [
+        (RunInputKind.STEERING, (receipt.item.input_id,))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_steering_and_follow_up_cross_real_turn_boundaries() -> None:
+    client = _GatedScriptedClient(
+        [
+            [TextDelta("first"), StreamEnd("end_turn", 1, 1)],
+            [TextDelta("second"), StreamEnd("end_turn", 1, 1)],
+            [TextDelta("third"), StreamEnd("end_turn", 1, 1)],
+        ]
+    )
+
+    class _RecordingHooks:
+        def __init__(self) -> None:
+            self.events: list[str] = []
+
+        async def run_hooks(self, event, context) -> None:
+            self.events.append(event)
+
+        def drain_notifications(self):
+            return []
+
+        def get_prompt_messages(self):
+            return []
+
+    hooks = _RecordingHooks()
+    agent = Agent(
+        client,
+        ToolRegistry(),
+        "anthropic",
+        hook_engine=hooks,
+    )
+    conversation = ConversationManager()
+    conversation.add_user_message("go")
+    events = []
+
+    async def sink(event) -> None:
+        events.append(event)
+
+    run = agent.start_run(conversation, sink)
+    await client.entered.wait()
+    follow_up = run.follow_up("after you finish")
+    steering = run.steer("change direction")
+    client.release.set()
+    result = await run.wait_until_idle()
+
+    assert result.status == "completed"
+    assert result.turns == 3
+    assert ("user", "change direction") in client.snapshots[1]
+    assert ("user", "after you finish") not in client.snapshots[1]
+    assert ("user", "after you finish") in client.snapshots[2]
+    delivered = [event for event in events if isinstance(event, RunInputDelivered)]
+    assert [(event.kind, event.input_ids) for event in delivered] == [
+        (RunInputKind.STEERING, (steering.item.input_id,)),
+        (RunInputKind.FOLLOW_UP, (follow_up.item.input_id,)),
+    ]
+    turns = [event for event in events if isinstance(event, TurnComplete)]
+    assert [(event.turn, event.reason, event.will_continue) for event in turns] == [
+        (1, "steering", True),
+        (2, "follow_up", True),
+        (3, "natural", False),
+    ]
+    assert hooks.events.count("session_start") == 1
+    assert hooks.events.count("session_end") == 1
+    assert hooks.events.count("turn_start") == 3
+    assert hooks.events.count("turn_end") == 3
+
+
+@pytest.mark.asyncio
+async def test_steering_waits_for_a_real_tool_batch_and_follow_up_waits_for_stop(
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowTool(_EchoTool):
+        name = "Slow"
+        is_concurrency_safe = False
+
+        async def execute(self, params: _EmptyParams) -> ToolResult:
+            started.set()
+            await release.wait()
+            return ToolResult(output="tool finished")
+
+    registry = ToolRegistry()
+    registry.register(_SlowTool())
+    client = _GatedScriptedClient(
+        [
+            [
+                ToolCallComplete("slow", "Slow", {}),
+                StreamEnd("tool_use", 1, 1),
+            ],
+            [TextDelta("after tool"), StreamEnd("end_turn", 1, 1)],
+            [TextDelta("after follow-up"), StreamEnd("end_turn", 1, 1)],
+        ]
+    )
+    client.release.set()
+    agent = Agent(client, registry, "anthropic")
+    conversation = ConversationManager()
+    conversation.add_user_message("go")
+    events = []
+
+    async def sink(event) -> None:
+        events.append(event)
+
+    run = agent.start_run(conversation, sink)
+    await started.wait()
+    follow_up = run.follow_up("after everything")
+    steering = run.steer("change after the tool")
+    release.set()
+    result = await run.wait_until_idle()
+
+    assert result.status == "completed"
+    assert result.turns == 3
+    assert ("user", "change after the tool") in client.snapshots[1]
+    assert ("user", "after everything") not in client.snapshots[1]
+    assert ("user", "after everything") in client.snapshots[2]
+
+    tool_result_index = next(
+        index
+        for index, message in enumerate(conversation.history)
+        if message.tool_results
+    )
+    steering_index = next(
+        index
+        for index, message in enumerate(conversation.history)
+        if message.content == "change after the tool"
+    )
+    assert tool_result_index < steering_index
+
+    delivered = [event for event in events if isinstance(event, RunInputDelivered)]
+    assert [(event.kind, event.input_ids) for event in delivered] == [
+        (RunInputKind.STEERING, (steering.item.input_id,)),
+        (RunInputKind.FOLLOW_UP, (follow_up.item.input_id,)),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cancel_restores_queued_inputs_in_enqueue_order() -> None:
+    entered = asyncio.Event()
+
+    class _BlockingClient(LLMClient):
+        async def stream(self, conversation, system="", tools=None):
+            entered.set()
+            await asyncio.Event().wait()
+            yield StreamEnd("end_turn")
+
+    agent = Agent(_BlockingClient(), ToolRegistry(), "anthropic")
+    events = []
+
+    async def sink(event) -> None:
+        events.append(event)
+
+    run = agent.start_run(ConversationManager(), sink)
+    await entered.wait()
+    follow_up = run.follow_up("later")
+    steering = run.steer("now")
+    run.cancel()
+    result = await run.wait_until_idle()
+
+    assert result.status == "cancelled"
+    assert result.undelivered_inputs == (follow_up.item, steering.item)
+    assert not any(isinstance(event, TurnComplete) for event in events)
+    with pytest.raises(RunInputClosedError):
+        run.steer("too late")
+
+
+@pytest.mark.asyncio
+async def test_max_turns_restores_input_that_would_require_another_call() -> None:
+    client = _GatedScriptedClient(
+        [[TextDelta("first"), StreamEnd("end_turn", 1, 1)]]
+    )
+    agent = Agent(
+        client,
+        ToolRegistry(),
+        "anthropic",
+        max_iterations=1,
+    )
+    events = []
+
+    async def sink(event) -> None:
+        events.append(event)
+
+    run = agent.start_run(ConversationManager(), sink)
+    await client.entered.wait()
+    follow_up = run.follow_up("one more thing")
+    client.release.set()
+    result = await run.wait_until_idle()
+
+    assert result.status == "max_turns"
+    assert result.undelivered_inputs == (follow_up.item,)
+    turns = [event for event in events if isinstance(event, TurnComplete)]
+    assert [(event.reason, event.will_continue) for event in turns] == [
+        ("max_turns", False)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_terminating_tool_restores_all_queued_inputs() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class _TerminatingTool(_EchoTool):
+        name = "Terminate"
+        is_concurrency_safe = False
+
+        async def execute(self, params: _EmptyParams) -> ToolResult:
+            started.set()
+            await release.wait()
+            return ToolResult(output="stopped", terminate=True)
+
+    registry = ToolRegistry()
+    registry.register(_TerminatingTool())
+    agent = Agent(
+        _ScriptedClient(
+            [
+                [
+                    ToolCallComplete("stop", "Terminate", {}),
+                    StreamEnd("tool_use", 1, 1),
+                ]
+            ]
+        ),
+        registry,
+        "anthropic",
+    )
+    events = []
+
+    async def sink(event) -> None:
+        events.append(event)
+
+    run = agent.start_run(ConversationManager(), sink)
+    await started.wait()
+    steering = run.steer("change")
+    follow_up = run.follow_up("later")
+    release.set()
+    result = await run.wait_until_idle()
+
+    assert result.status == "completed"
+    assert result.undelivered_inputs == (steering.item, follow_up.item)
+    turns = [event for event in events if isinstance(event, TurnComplete)]
+    assert [(event.reason, event.will_continue) for event in turns] == [
+        ("terminate", False)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_truncated_recovery_emits_one_completion_per_model_turn() -> None:
+    agent = Agent(
+        _ScriptedClient(
+            [
+                [TextDelta("partial"), StreamEnd("max_tokens", 1, 1)],
+                [TextDelta("done"), StreamEnd("end_turn", 1, 1)],
+            ]
+        ),
+        ToolRegistry(),
+        "anthropic",
+    )
+    events = []
+
+    async def sink(event) -> None:
+        events.append(event)
+
+    run = agent.start_run(ConversationManager(), sink)
+    result = await run.wait_until_idle()
+
+    assert result.status == "completed"
+    turns = [event for event in events if isinstance(event, TurnComplete)]
+    assert [(event.turn, event.reason, event.will_continue) for event in turns] == [
+        (1, "retry", True),
+        (2, "natural", False),
+    ]

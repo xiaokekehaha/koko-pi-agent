@@ -1,9 +1,9 @@
 # MewCode Runtime 迭代设计：参考 Pi，而不是实现 Mini Pi
 
-> - 状态：Design v0.3，阶段 0 已实施；阶段 1 待确认
+> - 状态：Design v0.9，阶段 0/1/2A/2B 已实施并通过全量验证
 > - 日期：2026-08-16
 > - 目标主体：当前 MewCode 0.2.0 项目，Python 3.11+
-> - 当前阶段：只做规划和接口设计，不修改生产源码
+> - 当前阶段：阶段 2B TurnPreparer 已完成；下一阶段候选为 2C 资源与受控任务所有权
 > - 核心取向：在现有 MewCode 上迭代 Runtime，参考 Pi 的分层与扩展机制，并用 Python 的资源管理机制保证可靠清理
 > - 明确边界：不是另起炉灶实现一个 Mini Pi，也不是把 MewCode 改名或复刻成 Pi
 
@@ -12,11 +12,16 @@
 - [Mini Plugin Agent：面向 Python 新手的插件化编程学习设计](./plugin-agent-learning-design.md)
 - [从 Cordis 的时空可组合性到 Python 插件运行时](./cordis-python-async-learning-guide.md)
 - [阶段 0：统一 Agent Loop 与 Tool Execution Pipeline](./mewcode-agent-loop-stage0-design.md)
+- [阶段 1：ExtensionHost 内置 Tool 纵向切片](./mewcode-extension-host-stage1-design.md)
+- [阶段 2A：AgentRun 控制面与运行中输入](./mewcode-agent-run-control-stage2a-design.md)
+- [ResourceScope 与 TaskSupervisor 候选设计（已顺延）](./mewcode-extension-resources-stage2a-design.md)
 - [Pi 官方仓库](https://github.com/earendil-works/pi)
 - [Pi Chapter 1：Core、Agent 与 Harness](https://books.antinomie.org/pi/chapter/01)
 - [Pi Chapter 2：一次 Prompt 的完整路径](https://books.antinomie.org/pi/chapter/02)
 - [Pi Extensions 官方文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md)
 - [Pi SDK 官方文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md)
+- [Pi Agent Loop 讲解](https://dg-ai-notes.pages.dev/modules/ch03-agent-loop/)
+- [Pi 官方 Agent Loop 源码](https://github.com/earendil-works/pi/blob/main/packages/agent/src/agent-loop.ts)
 
 ## 1. 先说结论：主体是 MewCode
 
@@ -177,7 +182,9 @@ Pi 的设计有时会被概括为“small core”。这里的 small 指核心承
 flowchart TB
     UI["CLI / TUI / Remote / Teammate"] --> AR["AgentRuntime<br/>统一对外入口"]
     AR --> RUN["AgentRun<br/>取消与 settlement"]
+    RUN --> RC["RunControl<br/>steering / follow-up / seal"]
     RUN --> LOOP["AgentLoop<br/>唯一模型与 Turn 循环"]
+    LOOP --> RC
     LOOP --> TP["ToolPipeline<br/>prepare → execute → finalize"]
     AR --> ES["ExtensionSession<br/>本次 Agent 的扩展作用域"]
     EH["ExtensionHost<br/>装载与生命周期总管"] --> ES
@@ -209,11 +216,23 @@ flowchart TB
 | --- | --- | --- |
 | `AgentLoop` | 运行一个 RunRequest，向 EventSink 发事件并返回 RunResult | 模型流、Turn 循环、重试、消息回写和停止判断 |
 | `ToolPipeline` | 执行一个完整 Tool Batch | 查找、校验、Hook、Permission、Approval、并发、截断保护、spill、budget、排序和 terminate |
-| `AgentRun` | `cancel()`、`wait_until_idle()`、只读状态 | active-run、TaskGroup、最终事件和 settlement |
+| `AgentRun` | `steer()`、`follow_up()`、`cancel()`、`wait_until_idle()`、只读状态 | active-run、RunControl、最终事件和 settlement |
 
 TUI、Remote、Headless、Skill 和 Sub-agent 是这些 Interface 的 Adapter，不再拥有自己的 Loop Implementation。
 
 详细不变量、时序、Interface 草案和 0A–0F 迁移计划见[阶段 0 设计](./mewcode-agent-loop-stage0-design.md)。
+
+### 5.0A `RunControl`：AgentRun 的运行中输入控制面
+
+阶段 0 统一了 Loop，但没有定义 active run 收到新用户输入时的产品语义。阶段 2A 在不创建第二个 Loop 的前提下增加一个内部 `RunControl`：
+
+- steering 在当前完整 Turn 后投递；
+- follow-up 只在 Loop 原本自然停止时投递；
+- cancel、terminate、max turns 和 failure 不消费 queued input；
+- AgentLoop 是 active run 期间把 queued input 写入 Conversation 的唯一 owner；
+- TUI、Remote 与直接 AgentRun 调用共享同一个 Interface。
+
+完整 Interface、状态机、竞态处理、Adapter 协议和非 TDD 实施步骤见[阶段 2A 详细设计](./mewcode-agent-run-control-stage2a-design.md)。
 
 ### 5.1 `AgentRuntime`：应用看到的统一入口
 
@@ -693,8 +712,11 @@ sequenceDiagram
 | --- | --- | --- | --- |
 | 0：统一 Loop 与 Tool Pipeline | 所有运行路径共享安全语义、取消和 settlement | 新增 AgentLoop、ToolPipeline、AgentRun、EventSink 和 Approval Adapter | 无配置和 Session 格式变化；旧 Agent 方法暂时兼容 |
 | 1：内置 Tool 纵向切片 | 三个入口使用同一 Tool 装配，注册可追踪、可撤销 | 新增 AgentRuntime、ExtensionHost、ExtensionAPI 的 Tool 子集 | 无配置变化；工具名称和 Schema 保持不变 |
-| 2A：Command 与资源所有权 | Tool、Command、文件、连接和任务统一清理 | ExtensionAPI 增加 Command、资源托管和受控任务 | 无配置变化；原命令格式不变 |
-| 2B：扩展事件管线 | 稳定运行事件可被观察和拦截，Session 与 Run Hook 正式分层 | 新增 Observer、Interceptor 和类型化决策结果 | 阶段 0 事件保持稳定；Hook YAML 通过 Adapter 映射 |
+| 2A：AgentRun 控制面 | 运行中输入不再打断、丢失或触发并发 Run | AgentRun 增加 steering/follow-up，内部新增 RunControl | Remote 协议只增加可选 delivery；Session 格式不变 |
+| 2B：Turn preparation seam | compaction、memory、reminder 与 Tool projection 从肥 Loop 集中到一个阶段 Module | 新增 TurnPreparer 与 PreparedModelCall | 无配置、Session 或 Provider Interface 变化 |
+| 2C：资源与受控任务所有权 | 文件、连接和扩展后台任务统一清理 | ExtensionAPI 增加资源托管和受控任务 | 无配置变化；Tool 与入口行为不变 |
+| 2D：扩展事件管线 | 稳定运行事件可被观察和拦截，Session 与 Run Hook 正式分层 | 新增 Observer、Interceptor 和类型化决策结果 | 复用 2A 稳定后的 Run/Turn 生命周期 |
+| 2E：Command contribution 所有权 | Command 来源、冲突、刷新和注销可追踪 | CommandRegistry 增加 Contribution/Handle，入口使用 Command profile | 原命令格式不变；Markdown loader 仍不自动发现 |
 | 3：安装包扩展 | 可从已安装 Python 包发现第三方扩展 | 新增 ResourceLoader 和扩展加载诊断 | 只增加可选配置；默认仍只启用内置能力 |
 | 4：本地路径与信任 | 支持扩展开发，同时阻止仓库代码静默执行 | 新增 ProjectTrust Interface | 新增独立信任记录；项目配置不能自我授权 |
 | 5：安全重载 | 新版本失败时旧 Runtime 继续工作 | AgentRuntime 增加会话替换，API 增加批次校验 | 不改变会话持久化格式；默认不开自动监听 |
@@ -724,71 +746,80 @@ sequenceDiagram
 
 目标：完成最小纵向切片，证明“统一装配 + 所有权 + 反向注销”可行，但不加载外部 Python 代码。
 
-计划内容：
+阶段 1 详细盘点修正了初稿中的三个假设：
 
-- 新建 `mewcode.extensions` 深模块；
-- 定义 ExtensionSpec、ExtensionAPI、ExtensionSession 和 RegistrationHandle；
-- 使用 AsyncExitStack 管理内置 Tool 注册；
-- ToolRegistry 对重复名称快速失败，并保存来源；
-- 新建 AgentRuntime 组合根；
-- CLI、Remote 和队友模式改用同一内置 Tool 装配入口；
-- 基于阶段 0 的 AgentLoop / ToolPipeline Interface 装配 Tool，不再接旧执行分支；现有 Tool 类和用户配置行为不变。
+- 真实 TUI 装配位于 `mewcode/app.py`，不能只迁移 `__main__.py` 和 Remote；
+- TUI、prompt、Remote 与 teammate 的 Tool 清单本来就不同，应使用显式 `ToolProfile` 保持名称与顺序，而不是强制清单相同；
+- sub-agent、fork 与 coordinator 当前复用父 Tool 对象，本阶段明确建模为 borrowed ToolView，不冒充独立 ExtensionSession。
 
-预计涉及 9 个文件，超过 8 个文件的原因是必须同时覆盖三个实际入口，避免产生“新 Runtime 只在 CLI 生效、Remote 继续手工装配”的半迁移状态：
+实现结果：
 
-| 文件 | 变更性质 |
-| --- | --- |
-| `mewcode/extensions/__init__.py` | 新增稳定导出面 |
-| `mewcode/extensions/contracts.py` | 新增最小公共 Interface |
-| `mewcode/extensions/host.py` | 新增生命周期与所有权 Implementation |
-| `mewcode/extensions/builtins.py` | 把现有内置 Tool 组合成扩展说明 |
-| `mewcode/runtime/agent_runtime.py` | 在阶段 0 runtime 包中新增统一组合根和 AgentRuntime |
-| `mewcode/tools/__init__.py` | 增加冲突与可撤销注册能力 |
-| `mewcode/__main__.py` | CLI 和队友入口改用统一组合根 |
-| `mewcode/remote.py` | Remote 改用统一组合根 |
-| `tests/test_extensions.py` | 覆盖注册、冲突、失败回滚、关闭与入口一致性 |
+- ToolRegistry 保存带来源的 Contribution，同名注册快速失败并返回幂等 RegistrationHandle；
+- ExtensionHost 只暴露 async `open_session()`，内部管理激活、回滚、反向关闭和诊断；
+- Stage 1 ExtensionAPI 只提供 `register_tool()`，不提前开放 Command、事件、通用资源或后台任务；
+- AgentRuntime 先创建空 Registry 与 Agent，再在首次 Run 前原子激活内置 Tool；
+- 四个入口只选择 ToolProfile 并提供 typed bindings，不再逐个注册内置 Tool；
+- MCPManager 仍拥有 MCP client，但保存 Tool registration Handle，并在 shutdown 时反向注销；
+- 迁移按 1A–1F 进行：基线、Registry、Host、prompt tracer bullet、TUI/Remote、teammate/MCP/清理旧路径。
 
 阶段 1 验收：
 
-- 三种入口的内置工具清单与迁移前一致；
+- 四个完整 Runtime profile 的内置 Tool 名称、顺序和 Schema 与迁移前一致；
 - 重复 Tool 注册在启动时失败并显示双方来源；
-- 关闭 ExtensionSession 后 Registry 为空；
+- 关闭 ExtensionSession 后其 owned contribution 为零；
 - 第二个 Tool 注册失败时，第一个 Tool 自动注销；
-- 现有 Agent 和 Remote 测试不回归。
+- borrowed ToolView 关闭不影响父 Runtime；
+- 现有 Agent、ToolPipeline、Remote、Skill、sub-agent 和 teammate 测试不回归。
 
 阶段 1 回滚：删除新组合根接线并恢复原有手工装配；没有配置格式和持久化数据迁移，回滚不需要转换用户数据。
 
-### 阶段 2A：Command、资源和后台任务纳入所有权
+完整 Interface、状态机、Tool profile、文件影响、1A–1F 步骤和测试矩阵见[阶段 1 详细设计](./mewcode-extension-host-stage1-design.md)。
 
-目标：让 ExtensionAPI 不只管理 Tool，还能完整管理长生命周期资源。
+### 阶段 2A：AgentRun 控制面与运行中输入
 
-计划内容：
-
-- CommandRegistry 支持带所有者的可撤销注册；
-- ResourceScope 托管同步与异步上下文；
-- TaskSupervisor 统一创建、取消和等待扩展任务；
-- 清理错误聚合，幂等关闭；
-- 现有内置 Command 通过 Adapter 接入，不改变命令语义。
-
-预计文件影响：`mewcode/extensions/contracts.py`、`mewcode/extensions/host.py`、`mewcode/commands/registry.py`、`mewcode/commands/handlers/__init__.py`、`mewcode/__main__.py`、`mewcode/remote.py`、`tests/test_extensions.py`、`tests/test_commands.py`。
-
-阶段 2A 验收：一个扩展同时注册 Tool、Command、文件和任务时，无论正常关闭还是中途失败都不残留资源。
-
-### 阶段 2B：扩展事件管线
-
-目标：把阶段 0 已稳定的 Run/Turn/Message/Tool 事件开放给 Observer，并为可以阻止或转换行为的 Interceptor 建立有限决策类型。
+目标：统一 TUI、Remote 与 Core 对 active run 新输入的语义，消除隐式取消、静默丢失和第二并发 Run 三套冲突行为。
 
 计划内容：
 
-- 复用阶段 0 的类型化运行事件，新增 Observer 与 Interceptor 决策结果；
-- HookEngine 通过 Adapter 接入；
-- 将未跟踪异步 Hook 交给 TaskSupervisor；
-- 修正当前 `session_start/end` 与单次 Agent 运行混用的问题；
-- 保持现有 Hook 配置兼容，并增加弃用提示而非直接破坏。
+- 新增内部 `RunControl`，分别拥有 steering 与 follow-up FIFO；
+- AgentRun 暴露 `steer()`/`follow_up()`，AgentRuntime 提供窄 facade；
+- AgentLoop 在首次模型调用前和完整 Turn 后消费 typed directive；
+- cancel、terminate、max turns 与 failure 先 seal，不消费 queued input；
+- RunResult 返回 undelivered inputs，TUI/Remote 能恢复；
+- 统一自然文本、Tool 和 truncated recovery 的 `TurnComplete`；
+- TUI Enter/Alt+Enter 与 Remote 可选 delivery 字段接入同一 Core。
 
-预计文件影响：新增 `mewcode/extensions/events.py`，修改 `mewcode/extensions/contracts.py`、`mewcode/extensions/host.py`、`mewcode/runtime/events.py`、`mewcode/hooks/events.py`、`mewcode/hooks/engine.py`、`tests/test_hooks.py` 和 `tests/test_extensions.py`。
+实际新增 `mewcode/runtime/run_control.py` 与 `tests/test_run_control.py`，并修改 Runtime event/loop/facade、TUI、Remote 及相关 Adapter 测试；没有创建第二套 AgentLoop，也没有修改 Session schema。
 
-阶段 2B 验收：两次连续 Prompt 只触发一次 Session 启动与一次最终关闭，但各自触发 Agent Run 开始和结束；权限拦截器异常时 Tool 不执行。
+阶段 2A 验收已通过：同一 gated scripted Agent 在 TUI/Remote 中得到一致的 Conversation 投影；运行中输入不丢失、不隐式取消，硬停止不误消费；TUI Session exactly-once、单 active run 与 ToolPipeline 行为均未回归。目标矩阵 `76 passed`；当前树全量 `693 passed, 1 skipped, 1` 个既有 warning；临时 detached worktree 隔离重放 Stage 1+2A 后为 `687 passed, 1 skipped, 1 warning`。
+
+完整范围、Interface、状态机、2A0–2A5 非 TDD 实施步骤和验证矩阵见[阶段 2A 详细设计](./mewcode-agent-run-control-stage2a-design.md)。
+
+### 阶段 2B：Turn preparation seam
+
+目标：在 2A 固定 delivery boundary 后，把每轮模型调用前的 mailbox、notification、Hook prompt、plan/coordinator reminder、deferred-tool reminder、compaction、memory/environment 和 Tool projection 集中到一个深 Module。
+
+实现结果：
+
+- 新增内部深 Module `TurnPreparer`，通过单一 `prepare()` Interface 返回不可变的 `PreparedModelCall`；
+- mailbox、notification、pre-send Hook、system prompt、plan/coordinator reminder、Hook notification、deferred-tool reminder、auto compact、memory/environment 再注入和 Tool Schema 投影从 `_run_loop()` 移入该 Module；
+- AgentLoop 继续拥有 Turn/Run 生命周期、streaming、ToolPipeline 与 RunControl 决策，没有增加任意 callback、第二套 Conversation 或动态模型配置；
+- Hook 调度逻辑收回 Agent 的私有实现，AgentLoop 与 TurnPreparer 共用，不保留浅转发包装；
+- 实现完成后新增 TurnPreparer Interface 测试，以及 steering 在真实慢 Tool batch 完成后才投递的纵向测试。
+
+阶段 2B 验收已通过：相关目标回归 `42 passed`；当前完整工作树全量 `696 passed, 1 skipped, 1` 个既有 pytest mark warning；compileall 与 `git diff --check` 通过。当前受限环境没有可执行 Ruff，因此本阶段没有新增 Ruff 通过声明。
+
+### 阶段 2C：资源与受控后台任务纳入所有权
+
+目标保持不变：让 ExtensionAPI 完整管理长生命周期资源和 extension-owned task。原[候选详细设计](./mewcode-extension-resources-stage2a-design.md)继续保留，实施前按 2C 编号复核，不与 RunControl 混做。
+
+### 阶段 2D：扩展事件管线
+
+目标：在 2A 统一后的 Run/Turn 生命周期上开放 Observer 与有限 Interceptor，并让 HookEngine 通过 Adapter 接入。ResourceScope/TaskSupervisor 应先于异步 Observer 托管实施。
+
+### 阶段 2E：Command contribution 所有权
+
+目标：单独解决 Command name/alias 的 owner、source、RegistrationHandle、入口 profile 和 Skill Command 刷新，不把入口执行 Context 泄漏进 ExtensionHost；不顺带接入尚未用于生产的 Markdown Command loader。
 
 ### 阶段 3：安装包扩展
 
@@ -960,13 +991,19 @@ sequenceDiagram
 
 进入实现前，需要确认下面这些选择：
 
-- [ ] 保留现有 MewCode Agent 行为，在测试保护下收敛为唯一 AgentLoop，不创建 Mini Pi 或平行 Runtime 产品。
+- [x] 保留现有 MewCode Agent 行为，在测试保护下收敛为唯一 AgentLoop，不创建 Mini Pi 或平行 Runtime 产品。
 - [x] 在 ExtensionHost 前先完成阶段 0，让所有运行路径共享唯一 AgentLoop 与 ToolPipeline。
-- [ ] 默认取消 streaming 期间的 Tool 抢跑，完整 Assistant Message 确认后才执行 Tool。
-- [ ] 用 `ToolResult.terminate` 替代 Loop 对 `ExitPlanMode` 名称的硬编码。
-- [ ] 第一阶段只迁移内置 Tool，先证明纵向切片。
-- [ ] 每个主 Agent 和队友 Agent 都创建独立 ExtensionSession。
-- [ ] 同名 Tool 和 Command 默认失败，不允许扩展自行覆盖。
+- [x] 默认取消 streaming 期间的 Tool 抢跑，完整 Assistant Message 确认后才执行 Tool。
+- [x] 用 `ToolResult.terminate` 替代 Loop 对 `ExitPlanMode` 名称的硬编码。
+- [x] 第一阶段只迁移内置 Tool，先证明纵向切片。
+- [x] 每个完整的 TUI、prompt、Remote 和外部 teammate Runtime 都创建独立 ExtensionSession；短生命周期 sub-agent/fork 暂用显式 borrowed ToolView。
+- [x] 四个入口使用显式 ToolProfile 保持迁移前的名称、顺序和角色差异。
+- [x] Stage 1 ExtensionAPI 只开放 Tool 注册，Command、事件、通用资源和任务不提前进入。
+- [x] 同名 Tool 默认失败，不允许扩展自行覆盖；CommandRegistry 沿用既有冲突快速失败。
+- [x] 新 Agent Loop 材料触发阶段重排：Stage 2A 先做 RunControl；TurnPreparer 作为 2B 设计门；ResourceScope、EventPipeline、Command 顺延但不删除。
+- [x] Stage 2A 开发采用设计先行、实现后验证，不使用 red-green-refactor TDD。
+- [x] Stage 2A RunControl、Core、Runtime facade、TUI/Remote 与持久化恢复均已实施并通过全量验证。
+- [x] Stage 2B TurnPreparer 已以 typed result Module 实施，未引入通用 callback 或改变 RunControl/ToolPipeline 语义。
 - [ ] 外部扩展默认 warn 隔离，CI 可使用 strict 模式。
 - [ ] 第一版不引入 pluggy，不实现通用 Service/Inject 容器。
 - [ ] 第一版不做热重载，只预留候选会话和批次号设计。
@@ -974,4 +1011,4 @@ sequenceDiagram
 
 ## 20. 下一步
 
-阶段 0 已完成并通过全量回归。下一步是阶段 1 ExtensionHost：它必须建立在现有 AgentRun、AgentLoop、ToolPipeline 和类型化事件上，不得重新引入第二条执行路径。后续 Command、事件、外部扩展和重载仍逐阶段决定，不一次性铺开全部框架。
+阶段 0、阶段 1、[阶段 2A AgentRun 控制面](./mewcode-agent-run-control-stage2a-design.md)和阶段 2B TurnPreparer 均已完成。2B 已把每轮模型调用前的 Context 准备收进单一 `prepare()` Interface，AgentLoop 只消费 `PreparedModelCall`，RunControl、ToolPipeline、Session 和 Provider 行为保持不变。下一步候选是按 2C 编号复核并实施[ResourceScope 与 TaskSupervisor 候选设计](./mewcode-extension-resources-stage2a-design.md)；事件、Command、外部扩展和重载仍需各自审批。

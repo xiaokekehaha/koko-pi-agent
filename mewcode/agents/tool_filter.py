@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from mewcode.tools import ToolRegistry
+from mewcode.tools import ContributionOwner, ToolRegistry, ToolView
 
 if TYPE_CHECKING:
     from mewcode.agents.parser import AgentDef
@@ -140,12 +140,10 @@ def resolve_agent_tools(
             if name in allowed_set
         }
 
-    filtered = ToolRegistry()
-    for tool in mcp_tools.values():
-        filtered.register(tool)
-    for tool in all_tools.values():
-        filtered.register(tool)
-    return filtered
+    return ToolView.borrow(
+        parent_registry,
+        names=(*mcp_tools, *all_tools),
+    )
 
 
 def build_teammate_tools(
@@ -180,6 +178,13 @@ def build_teammate_tools(
             and name not in TEAMMATE_DISALLOWED_TOOLS
         }
 
+    # 协作工具必须绑定当前队友身份，不能借用 parent 中绑定 lead/其他队友的实例。
+    filtered = {
+        name: tool
+        for name, tool in filtered.items()
+        if name not in TEAMMATE_COORDINATION_TOOLS
+    }
+
     # 应用 agent 定义中的工具限制
     if definition is not None:
         if definition.disallowed_tools:
@@ -201,13 +206,19 @@ def build_teammate_tools(
         SendMessageTool(team_manager, team_name, agent_id, agent_name),
     ]
 
-    registry = ToolRegistry()
-    for tool in filtered.values():
-        registry.register(tool)
-    for tool in coordination_tools:
-        registry.register(tool)
-
-    return registry
+    return ToolView.borrow(
+        parent_registry,
+        names=(
+            name
+            for name in filtered
+            if name not in TEAMMATE_COORDINATION_TOOLS
+        ),
+        additions=coordination_tools,
+        local_owner=ContributionOwner(
+            extension_id="mewcode.teammate-coordination",
+            source="runtime-local",
+        ),
+    )
 
 
 def clone_registry_for_fork(parent_registry: ToolRegistry) -> ToolRegistry:
@@ -221,23 +232,21 @@ def clone_registry_for_fork(parent_registry: ToolRegistry) -> ToolRegistry:
 
     from mewcode.tools.agent_tool import FORK_QUERY_SOURCE
 
-    forked = ToolRegistry()
+    replacements: dict[str, Any] = {}
     for tool in parent_registry.list_tools():
         if tool.name == "Agent" and hasattr(tool, "query_source"):
             clone = copy.copy(tool)
             clone.query_source = FORK_QUERY_SOURCE
-            forked.register(clone)
-        else:
-            forked.register(tool)
-    return forked
+            replacements[tool.name] = clone
+    return ToolView.borrow(parent_registry, replacements=replacements)
 
 
 def apply_coordinator_filter(registry: ToolRegistry) -> ToolRegistry:
     # MCP 工具同样不放行：抓网页、查数据库这类返回值动辄几千 token，
     # 灌进 Lead 的上下文和让它自己读文件是一个性质，要用就派队员去用。
-    all_tools = {t.name: t for t in registry.list_tools()}
-    filtered = ToolRegistry()
-    for name, tool in all_tools.items():
-        if name in COORDINATOR_MODE_ALLOWED_TOOLS:
-            filtered.register(tool)
-    return filtered
+    names = (
+        tool.name
+        for tool in registry.list_tools()
+        if tool.name in COORDINATOR_MODE_ALLOWED_TOOLS
+    )
+    return ToolView.borrow(registry, names=names)

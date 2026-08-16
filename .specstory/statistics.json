@@ -1,0 +1,112 @@
+{
+  "sessions": {
+    "019ff0b9-529a-76c1-bd0e-fae39c795667": {
+      "user_message_count": 3,
+      "agent_message_count": 37,
+      "start_timestamp": "2026-08-11T12:08:45.954Z",
+      "end_timestamp": "2026-08-11T12:16:03.030Z",
+      "markdown_size_bytes": 11775,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    },
+    "019ff0bf-0f6c-7b61-8c0b-4810832d3034": {
+      "user_message_count": 7,
+      "agent_message_count": 100,
+      "start_timestamp": "2026-08-11T12:15:06.661Z",
+      "end_timestamp": "2026-08-16T06:50:20.664Z",
+      "markdown_size_bytes": 32634,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:06Z"
+    },
+    "01a00534-f2d9-7b42-a949-6c4a2c4535ab": {
+      "user_message_count": 1,
+      "agent_message_count": 33,
+      "start_timestamp": "2026-08-15T11:36:39.408Z",
+      "end_timestamp": "2026-08-15T11:39:50.860Z",
+      "markdown_size_bytes": 18598,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    },
+    "01a00535-b942-74e0-9efd-c5fe457854a5": {
+      "user_message_count": 10,
+      "agent_message_count": 332,
+      "start_timestamp": "2026-08-15T11:37:07.114Z",
+      "end_timestamp": "2026-08-16T05:48:00.800Z",
+      "markdown_size_bytes": 124192,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    },
+    "01a0081a-5e54-7720-b2c8-227ea26de769": {
+      "user_message_count": 7,
+      "agent_message_count": 233,
+      "start_timestamp": "2026-08-16T01:06:59.895Z",
+      "end_timestamp": "2026-08-16T04:51:54.249Z",
+      "markdown_size_bytes": 112558,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:06Z"
+    },
+    "01a0081b-a147-7bc1-a3ba-1e94b979ec80": {
+      "user_message_count": 1,
+      "agent_message_count": 128,
+      "start_timestamp": "2026-08-16T01:08:43.084Z",
+      "end_timestamp": "2026-08-16T01:18:26.786Z",
+      "markdown_size_bytes": 36635,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    },
+    "01a008a0-698f-72c3-911f-e6211a6fa165": {
+      "user_message_count": 5,
+      "agent_message_count": 51,
+      "start_timestamp": "2026-08-16T03:32:12.179Z",
+      "end_timestamp": "2026-08-16T04:31:54.694Z",
+      "markdown_size_bytes": 33193,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    },
+    "01a008d4-521d-7922-b5f9-04f0c92faf0e": {
+      "user_message_count": 3,
+      "agent_message_count": 127,
+      "start_timestamp": "2026-08-16T04:28:52.946Z",
+      "end_timestamp": "2026-08-16T05:34:49.231Z",
+      "markdown_size_bytes": 56410,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    },
+    "01a008d4-52bc-7660-b380-e826f314b601": {
+      "user_message_count": 2,
+      "agent_message_count": 2,
+      "start_timestamp": "2026-08-16T04:29:48.917Z",
+      "end_timestamp": "2026-08-16T04:30:04.202Z",
+      "markdown_size_bytes": 31294,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    },
+    "01a00919-613e-72d1-84f1-7ec97d703fa3": {
+      "user_message_count": 9,
+      "agent_message_count": 2199,
+      "start_timestamp": "2026-08-16T05:45:03.841Z",
+      "end_timestamp": "2026-08-16T09:35:00.858Z",
+      "markdown_size_bytes": 672512,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    },
+    "01a00927-cec5-74b0-a3b7-ea2c69c28c58": {
+      "user_message_count": 3,
+      "agent_message_count": 14,
+      "start_timestamp": "2026-08-16T06:00:04.149Z",
+      "end_timestamp": "2026-08-16T07:13:07.729Z",
+      "markdown_size_bytes": 10751,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    },
+    "01a00947-cebc-7533-a154-cb47b7a8e6bb": {
+      "user_message_count": 2,
+      "agent_message_count": 67,
+      "start_timestamp": "2026-08-16T06:35:48.299Z",
+      "end_timestamp": "2026-08-16T07:16:16.264Z",
+      "markdown_size_bytes": 34677,
+      "provider": "codex-cli",
+      "last_updated": "2026-08-16T10:35:07Z"
+    }
+  }
+}

@@ -28,7 +28,7 @@ class MewCodeMascotTestApp(MewCodeApp):
         provider = ProviderConfig("test", "openai", "http://unused", "test")
         super().__init__(providers=[provider], ui_state_path=ui_state_path)
 
-    def _select_provider(self, provider: ProviderConfig) -> None:
+    async def _select_provider(self, provider: ProviderConfig) -> None:
         self._selected_provider = provider
         self.query_one("#chat-area").display = True
         self.query_one("#input-area").display = True

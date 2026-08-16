@@ -40,12 +40,17 @@ from mewcode.agent import (
     TurnComplete,
     UsageEvent,
 )
-from mewcode.client import create_client, resolve_context_window
+from mewcode.client import create_client
 from mewcode.commands import CommandContext, CommandRegistry, CommandType
 from mewcode.commands.handlers import register_all_commands
 from mewcode.commands.parser import parse_command
 from mewcode.config import MCPServerConfig, ProviderConfig
 from mewcode.conversation import ConversationManager
+from mewcode.extensions import (
+    BuiltinRuntimeBindings,
+    ToolProfile,
+    create_builtin_extension_host,
+)
 from mewcode.hooks import HookEngine
 from mewcode.mcp import MCPManager
 from mewcode.memory import MemoryManager, load_instructions
@@ -57,10 +62,16 @@ from mewcode.permissions import (
     PermissionMode,
     RuleEngine,
 )
+from mewcode.runtime import (
+    AgentRuntime,
+    AgentRuntimeRequest,
+    RunFinished,
+    RunInputClosedError,
+    RunInputDelivered,
+    RunInputKind,
+)
 from mewcode.skills.loader import SkillLoader
-from mewcode.tools import ToolRegistry, create_default_registry
-from mewcode.tools.impl.tool_search import ToolSearchTool
-from mewcode.tools.load_skill import LoadSkill
+from mewcode.tools import ToolRegistry
 from mewcode.web_content import INDEX_HTML
 
 log = logging.getLogger(__name__)
@@ -90,11 +101,13 @@ class RemoteServer:
 
         # Agent 相关状态
         self.agent: Agent | None = None
+        self.runtime: AgentRuntime | None = None
         self.conversation: ConversationManager | None = None
         self.registry: ToolRegistry | None = None
         self.session_id: str = ""
         self._streaming = False
-        self._cancel_event: asyncio.Event | None = None
+        self._run_idle = asyncio.Event()
+        self._run_idle.set()
 
         # 权限请求的 pending 队列：id -> Future
         self._pending_perms: dict[str, asyncio.Future[PermissionResponse]] = {}
@@ -121,24 +134,24 @@ class RemoteServer:
 
     async def run(self) -> None:
         """启动 HTTP + WebSocket 服务器。"""
-        # 初始化 Agent
-        self._init_agent()
+        try:
+            await self._init_agent()
+            await self._init_mcp()
 
-        # 初始化 MCP（如果有配置）
-        await self._init_mcp()
+            print(f"\n  Remote UI: http://localhost:{self.port}\n")
 
-        print(f"\n  Remote UI: http://localhost:{self.port}\n")
-
-        # websockets 的 serve 支持 process_request 回调来处理普通 HTTP
-        async with websockets.serve(
-            self._ws_handler,
-            self.addr,
-            self.port,
-            process_request=self._process_http_request,
-            max_size=4 * 1024 * 1024,  # 4MB 消息上限
-        ):
-            # 服务器启动后永久阻塞
-            await asyncio.Future()
+            # websockets 的 serve 支持 process_request 回调来处理普通 HTTP
+            async with websockets.serve(
+                self._ws_handler,
+                self.addr,
+                self.port,
+                process_request=self._process_http_request,
+                max_size=4 * 1024 * 1024,  # 4MB 消息上限
+            ):
+                # 服务器启动后永久阻塞
+                await asyncio.Future()
+        finally:
+            await self._shutdown()
 
     # ------------------------------------------------------------------
     # HTTP 请求处理（为 / 路径提供前端 HTML）
@@ -198,17 +211,30 @@ class RemoteServer:
                 if msg_type == "user_message":
                     content = data.get("content", "").strip()
                     if content:
+                        try:
+                            delivery = RunInputKind(
+                                data.get("delivery", RunInputKind.STEERING.value)
+                            )
+                        except ValueError:
+                            await self._broadcast({
+                                "type": "error",
+                                "data": {"message": "Invalid input delivery kind"},
+                            })
+                            continue
                         # 在后台任务中处理，不阻塞 WebSocket 读循环
-                        asyncio.create_task(self._handle_user_message(content))
+                        asyncio.create_task(
+                            self._handle_user_message(content, delivery)
+                        )
 
                 elif msg_type == "permission_response":
                     self._handle_permission_response(data)
 
                 elif msg_type == "cancel":
-                    if self._cancel_event is not None:
-                        self._cancel_event.set()
-                    if self.agent is not None:
-                        self.agent.cancel_active_run()
+                    if self.runtime is not None:
+                        try:
+                            self.runtime.cancel_active_run()
+                        except RuntimeError:
+                            pass
 
                 elif msg_type == "ping":
                     # 应用层保活
@@ -223,7 +249,7 @@ class RemoteServer:
     # Agent 初始化（复刻 TUI 的 _select_provider 流程）
     # ------------------------------------------------------------------
 
-    def _init_agent(self) -> None:
+    async def _init_agent(self) -> None:
         """初始化 Agent 及相关子系统。"""
         provider = self.providers[0]
         work_dir = os.getcwd()
@@ -251,29 +277,9 @@ class RemoteServer:
         # 创建 LLM 客户端
         client = create_client(provider)
 
-        # 工具注册表
-        self.registry = create_default_registry()
-        self.registry.register(ToolSearchTool(self.registry, protocol=provider.protocol))
-
         # Skill 加载
         self.skill_loader = SkillLoader(work_dir)
         self.skill_loader.load_all()
-        load_skill_tool = LoadSkill()
-        self.registry.register(load_skill_tool)
-
-        # 创建 Agent
-        self.agent = Agent(
-            client=client,
-            registry=self.registry,
-            protocol=provider.protocol,
-            work_dir=work_dir,
-            permission_checker=checker,
-            context_window=provider.get_context_window(),
-            instructions_content=instructions,
-            memory_manager=self.memory_manager,
-            hook_engine=self.hook_engine,
-        )
-        self.agent.session_id = self.session_id
 
         # 团队工具在 remote 模式下同样可用，Lead 能在浏览器会话里组建团队把活派出去
         from mewcode.agents.loader import AgentLoader
@@ -281,11 +287,6 @@ class RemoteServer:
         from mewcode.agents.trace import TraceManager
         from mewcode.config import WorktreeConfig
         from mewcode.teams.manager import TeamManager
-        from mewcode.tools.agent_tool import AgentTool
-        from mewcode.tools.synthetic_output import SyntheticOutputTool
-        from mewcode.tools.task_stop import TaskStopTool
-        from mewcode.tools.team_create import TeamCreateTool
-        from mewcode.tools.team_delete import TeamDeleteTool
         from mewcode.worktree import WorktreeManager
 
         cfg = self._config
@@ -306,35 +307,56 @@ class RemoteServer:
             worktree_manager=wt_manager, trace_manager=trace_manager
         )
 
-        self.registry.register(AgentTool(
-            agent_loader=agent_loader,
-            task_manager=self.task_manager,
-            trace_manager=trace_manager,
-            parent_agent=self.agent,
-            enable_fork=enable_fork,
-            provider_config=provider,
-            worktree_manager=wt_manager,
-            team_manager=self.team_manager,
-        ))
-        self.registry.register(TeamCreateTool(
-            team_manager=self.team_manager,
-            parent_agent=self.agent,
-            teammate_mode="in-process",
-            is_interactive=False,
-            enable_coordinator_mode=enable_coordinator,
-        ))
-        self.registry.register(TeamDeleteTool(
-            team_manager=self.team_manager, parent_agent=self.agent
-        ))
-        self.registry.register(TaskStopTool(team_manager=self.team_manager))
-        self.registry.register(SyntheticOutputTool())
+        def create_agent(registry: ToolRegistry) -> Agent:
+            return Agent(
+                client=client,
+                registry=registry,
+                protocol=provider.protocol,
+                work_dir=work_dir,
+                permission_checker=checker,
+                context_window=provider.get_context_window(),
+                instructions_content=instructions,
+                memory_manager=self.memory_manager,
+                hook_engine=self.hook_engine,
+            )
+
+        def create_bindings(
+            agent: Agent,
+            registry: ToolRegistry,
+        ) -> BuiltinRuntimeBindings:
+            return BuiltinRuntimeBindings(
+                agent=agent,
+                registry=registry,
+                protocol=provider.protocol,
+                agent_loader=agent_loader,
+                task_manager=self.task_manager,
+                trace_manager=trace_manager,
+                provider_config=provider,
+                worktree_manager=wt_manager,
+                team_manager=self.team_manager,
+                skill_loader=self.skill_loader,
+                enable_fork=enable_fork,
+                teammate_mode="in-process",
+                is_interactive=False,
+                enable_coordinator_mode=enable_coordinator,
+            )
+
+        runtime = await AgentRuntime.open(
+            AgentRuntimeRequest(
+                profile=ToolProfile.REMOTE_LEAD,
+                work_dir=work_dir,
+                agent_factory=create_agent,
+                bindings_factory=create_bindings,
+            ),
+            extension_host=create_builtin_extension_host(),
+        )
+        self.runtime = runtime
+        self.registry = runtime.registry
+        self.agent = runtime.agent
+        self.agent.session_id = self.session_id
 
         # 队员干完活的回传落在 lead 信箱里，每轮排空成 system-reminder 交给 Lead
         self.agent.notification_fn = self.team_manager.drain_lead_mailbox
-
-        # 连接 Skill 到 Agent
-        load_skill_tool.set_loader(self.skill_loader)
-        load_skill_tool.set_agent(self.agent)
 
         catalog = self.skill_loader.get_catalog()
         if catalog:
@@ -389,22 +411,77 @@ class RemoteServer:
                 + "\n\n".join(parts)
             )
 
+    async def _shutdown(self) -> None:
+        if self.mcp_manager is not None:
+            await self.mcp_manager.shutdown()
+            self.mcp_manager = None
+        runtime = self.runtime
+        if runtime is not None:
+            await runtime.aclose()
+            self.runtime = None
+        session = self.session
+        if session is not None:
+            session.close()
+            self.session = None
+
     # ------------------------------------------------------------------
     # 用户消息处理
     # ------------------------------------------------------------------
 
-    async def _handle_user_message(self, content: str) -> None:
-        """处理来自 Web UI 的用户消息或斜杠命令。"""
-        if self._streaming:
-            return
+    async def _queue_active_input(
+        self,
+        content: str,
+        delivery: RunInputKind,
+    ) -> bool:
+        runtime = self.runtime
+        if runtime is None:
+            return False
+        try:
+            if delivery is RunInputKind.FOLLOW_UP:
+                receipt = runtime.follow_up_active_run(content)
+            else:
+                receipt = runtime.steer_active_run(content)
+        except RunInputClosedError:
+            receipt = None
+        except RuntimeError as exc:
+            await self._broadcast({
+                "type": "error",
+                "data": {"message": str(exc)},
+            })
+            return True
+        if receipt is None:
+            await self._run_idle.wait()
+            return False
+        await self._broadcast({
+            "type": "input_queued",
+            "data": {
+                "id": receipt.item.input_id,
+                "delivery": receipt.item.kind.value,
+                "position": receipt.position,
+            },
+        })
+        return True
 
+    async def _handle_user_message(
+        self,
+        content: str,
+        delivery: RunInputKind = RunInputKind.STEERING,
+    ) -> None:
+        """处理来自 Web UI 的用户消息或斜杠命令。"""
         # 斜杠命令
         if content.startswith("/"):
+            if self._streaming:
+                return
             await self._handle_slash_command(content)
             return
 
+        while self._streaming:
+            if await self._queue_active_input(content, delivery):
+                return
+
         # 普通消息 → 发给 Agent
         self._streaming = True
+        self._run_idle.clear()
         assert self.conversation is not None
         assert self.agent is not None
 
@@ -415,17 +492,11 @@ class RemoteServer:
             self.conversation.add_system_reminder(self._mcp_instructions)
             self._mcp_instructions = ""
 
-        # 创建取消事件
-        self._cancel_event = asyncio.Event()
         start_time = time.monotonic()
         stream_buf = ""
 
         try:
             async for event in self.agent.run(self.conversation):
-                # 检查取消信号
-                if self._cancel_event.is_set():
-                    break
-
                 if isinstance(event, StreamText):
                     stream_buf += event.text
                     await self._broadcast({
@@ -490,7 +561,20 @@ class RemoteServer:
                         stream_buf = ""
                     await self._broadcast({
                         "type": "turn_complete",
-                        "data": {"turn": event.turn},
+                        "data": {
+                            "turn": event.turn,
+                            "willContinue": event.will_continue,
+                            "reason": event.reason,
+                        },
+                    })
+
+                elif isinstance(event, RunInputDelivered):
+                    await self._broadcast({
+                        "type": "input_delivered",
+                        "data": {
+                            "ids": list(event.input_ids),
+                            "delivery": event.kind.value,
+                        },
                     })
 
                 elif isinstance(event, LoopComplete):
@@ -548,6 +632,26 @@ class RemoteServer:
                         },
                     })
 
+                elif isinstance(event, RunFinished):
+                    if event.result.undelivered_inputs:
+                        await self._broadcast({
+                            "type": "input_restored",
+                            "data": {
+                                "inputs": [
+                                    {
+                                        "id": item.input_id,
+                                        "delivery": item.kind.value,
+                                        "content": item.text,
+                                    }
+                                    for item in event.result.undelivered_inputs
+                                ]
+                            },
+                        })
+                    await self._broadcast({
+                        "type": "run_finished",
+                        "data": {"status": event.result.status},
+                    })
+
         except asyncio.CancelledError:
             await self._broadcast({
                 "type": "error",
@@ -561,7 +665,7 @@ class RemoteServer:
             })
         finally:
             self._streaming = False
-            self._cancel_event = None
+            self._run_idle.set()
 
     # ------------------------------------------------------------------
     # 斜杠命令处理
@@ -698,7 +802,9 @@ class RemoteServer:
 
     def send_user_message(self, text: str) -> None:
         """同步接口 — 注入用户消息并触发 agent。"""
-        asyncio.create_task(self._handle_user_message(text))
+        asyncio.create_task(
+            self._handle_user_message(text, RunInputKind.STEERING)
+        )
 
     def set_plan_mode(self, enabled: bool) -> None:
         if self.agent is None:

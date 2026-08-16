@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Any, Literal, TypeAlias
 
 from mewcode.context import CompactBoundary
+from mewcode.runtime.run_control import QueuedRunInput, RunInputKind, TurnReason
 
 
 class PermissionResponse(Enum):
@@ -21,6 +22,7 @@ class RunResult:
     turns: int
     final_text: str
     error: str = ""
+    undelivered_inputs: tuple[QueuedRunInput, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -103,9 +105,17 @@ ToolExecutionFinished = ToolResultEvent
 @dataclass
 class TurnComplete:
     turn: int
+    will_continue: bool = True
+    reason: TurnReason = "tool_calls"
 
 
 TurnFinished = TurnComplete
+
+
+@dataclass(frozen=True)
+class RunInputDelivered:
+    kind: RunInputKind
+    input_ids: tuple[str, ...]
 
 
 @dataclass
@@ -168,6 +178,7 @@ AgentEvent: TypeAlias = (
     | ToolUseEvent
     | ToolResultEvent
     | TurnComplete
+    | RunInputDelivered
     | LoopComplete
     | UsageEvent
     | ErrorEvent

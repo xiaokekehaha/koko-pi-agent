@@ -4,21 +4,15 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
-from mewcode.context import CompactEvent, auto_compact
 from mewcode.conversation import ConversationManager, ToolUseBlock
 from mewcode.conversation import ThinkingBlock as ConvThinkingBlock
-from mewcode.prompts import (
-    build_environment_context,
-    build_plan_mode_reminder,
-    build_system_prompt,
-)
+from mewcode.prompts import build_environment_context
 from mewcode.runtime.events import (
     AgentEvent,
-    CompactNotification,
     ErrorEvent,
     EventSink,
     LoopComplete,
@@ -27,6 +21,7 @@ from mewcode.runtime.events import (
     RetryEvent,
     RunFailed,
     RunFinished,
+    RunInputDelivered,
     RunResult,
     RunStarted,
     StreamText,
@@ -36,12 +31,24 @@ from mewcode.runtime.events import (
     TurnStarted,
     UsageEvent,
 )
+from mewcode.runtime.run_control import (
+    HardStopReason,
+    QueuedRunInput,
+    RunControl,
+    RunControlState,
+    RunInputClosedError,
+    RunInputKind,
+    RunInputReceipt,
+    TurnDirective,
+    TurnReason,
+)
 from mewcode.runtime.tool_pipeline import (
     ApprovalAdapter,
     CompletedAssistantMessage,
     ToolBatchRequest,
     ToolPipeline,
 )
+from mewcode.runtime.turn_preparer import TurnPreparer
 from mewcode.tools.base import (
     StreamEnd,
     StreamEvent,
@@ -144,6 +151,16 @@ class RunRequest:
     conversation: ConversationManager
 
 
+def _result_reason(result: RunResult) -> TurnReason:
+    if result.status == "cancelled":
+        return "cancelled"
+    if result.status == "failed":
+        return "failed"
+    if result.status == "max_turns":
+        return "max_turns"
+    return "natural"
+
+
 class AgentRun:
     def __init__(
         self,
@@ -158,6 +175,7 @@ class AgentRun:
         self._emit = emit
         self._on_idle = on_idle
         self._cancellation = RunCancellation()
+        self._control = RunControl()
         self._status = RunStatus.CREATED
         self._result: RunResult | None = None
         self._idle = asyncio.Event()
@@ -170,6 +188,12 @@ class AgentRun:
     @property
     def result(self) -> RunResult | None:
         return self._result
+
+    def steer(self, text: str) -> RunInputReceipt:
+        return self._enqueue_input(RunInputKind.STEERING, text)
+
+    def follow_up(self, text: str) -> RunInputReceipt:
+        return self._enqueue_input(RunInputKind.FOLLOW_UP, text)
 
     def start(self) -> None:
         if self._task is not None:
@@ -184,6 +208,7 @@ class AgentRun:
             RunStatus.IDLE,
         ):
             return
+        self._control.seal("cancelled")
         self._cancellation.cancel()
         self._status = RunStatus.CANCELLING
         if self._task is not None and not self._task.done():
@@ -206,6 +231,7 @@ class AgentRun:
                 self._emit,
                 self._cancellation,
                 self.run_id,
+                self._control,
             )
         except asyncio.CancelledError:
             self._result = RunResult(status="cancelled", turns=0, final_text="")
@@ -236,11 +262,30 @@ class AgentRun:
     def _settle(self, result: RunResult) -> None:
         if self._idle.is_set():
             return
+        if self._control.state is RunControlState.OPEN:
+            self._control.seal(_result_reason(result))
+        undelivered = self._control.recover_undelivered()
+        if undelivered:
+            result = replace(
+                result,
+                undelivered_inputs=(*result.undelivered_inputs, *undelivered),
+            )
         self._result = result
         self._status = RunStatus.SETTLING
         self._on_idle(self)
         self._status = RunStatus.IDLE
         self._idle.set()
+
+    def _enqueue_input(
+        self,
+        kind: RunInputKind,
+        text: str,
+    ) -> RunInputReceipt:
+        if self._status not in (RunStatus.CREATED, RunStatus.RUNNING):
+            raise RunInputClosedError(
+                f"AgentRun is {self._status.value} and no longer accepts queued input"
+            )
+        return self._control.enqueue(kind, text)
 
 
 class AgentLoop:
@@ -262,11 +307,15 @@ class AgentLoop:
         emit: EventSink,
         cancellation: RunCancellation,
         run_id: str,
+        control: RunControl,
     ) -> RunResult:
         await emit(RunStarted(run_id=run_id))
+        self._session_started = False
+        failure_messages: list[str] = []
         try:
-            result = await self._run_loop(request, emit, cancellation)
+            result = await self._run_loop(request, emit, cancellation, control)
         except asyncio.CancelledError:
+            control.seal("cancelled")
             result = RunResult(
                 status="cancelled",
                 turns=getattr(self, "_turn", 0),
@@ -274,17 +323,41 @@ class AgentLoop:
             )
         except Exception as exc:
             log.exception("Agent run failed")
+            control.seal("failed")
+            failure_messages.append(str(exc))
             result = RunResult(
                 status="failed",
                 turns=getattr(self, "_turn", 0),
                 final_text=getattr(self, "_last_text", ""),
                 error=str(exc),
             )
+
+        if self._session_started:
             try:
-                await emit(RunFailed(run_id=run_id, message=str(exc)))
-                await emit(ErrorEvent(message=str(exc)))
+                await self._agent._run_hook("session_end", emit)
+            except asyncio.CancelledError:
+                control.seal("cancelled")
+                result = replace(result, status="cancelled")
+            except Exception as exc:
+                log.exception("Agent session_end hook failed")
+                failure_messages.append(str(exc))
+                control.seal("failed")
+                if result.status != "cancelled":
+                    result = replace(
+                        result,
+                        status="failed",
+                        error="; ".join(failure_messages),
+                    )
+
+        if failure_messages:
+            message = "; ".join(failure_messages)
+            try:
+                await emit(RunFailed(run_id=run_id, message=message))
+                await emit(ErrorEvent(message=message))
             except Exception:
                 log.debug("Unable to emit run failure events", exc_info=True)
+
+        result = self._finalize_result(result, control)
         await emit(RunFinished(run_id=run_id, result=result))
         return result
 
@@ -293,6 +366,7 @@ class AgentLoop:
         request: RunRequest,
         emit: EventSink,
         cancellation: RunCancellation,
+        control: RunControl,
     ) -> RunResult:
         agent = self._agent
         conversation = request.conversation
@@ -307,114 +381,42 @@ class AgentLoop:
         conversation.inject_environment(env_context)
         memory_content = agent.memory_manager.load() if agent.memory_manager else ""
         conversation.inject_long_term_memory(agent.instructions_content, memory_content)
+        turn_preparer = TurnPreparer(agent, env_context)
 
-        await self._run_hook("session_start", emit)
+        await agent._run_hook("session_start", emit)
+        self._session_started = True
 
         self._turn = 0
         self._last_text = ""
         max_tokens_escalated = False
         output_recoveries = 0
 
+        await self._deliver_inputs(
+            conversation,
+            control.before_first_turn(),
+            emit,
+        )
+
         while True:
             cancellation.raise_if_cancelled()
             self._turn += 1
             iteration = self._turn
-            if agent.max_iterations > 0 and iteration > agent.max_iterations:
-                message = f"Agent reached maximum iterations ({agent.max_iterations})"
-                await emit(ErrorEvent(message=message))
-                await emit(LoopComplete(total_turns=iteration - 1))
-                return RunResult(
-                    status="max_turns",
-                    turns=iteration - 1,
-                    final_text=self._last_text,
-                    error=message,
-                )
 
             await emit(TurnStarted(turn=iteration))
-            await self._run_hook("turn_start", emit)
-            agent._consume_mailbox(conversation)
-            if agent.notification_fn:
-                for note in agent.notification_fn():
-                    conversation.add_system_reminder(note)
-            await self._run_hook("pre_send", emit)
-
-            hook_prompts = (
-                agent.hook_engine.get_prompt_messages() if agent.hook_engine else None
-            )
-            system = build_system_prompt(hook_prompts=hook_prompts)
-
-            if agent.plan_mode:
-                plan_path = str(agent._get_plan_path())
-                if agent.permission_checker:
-                    agent.permission_checker.plan_file_path = plan_path
-                conversation.add_system_reminder(
-                    build_plan_mode_reminder(
-                        plan_path, agent._get_plan_path().exists(), iteration
-                    )
-                )
-
-            if agent.coordinator_mode:
-                from mewcode.teams.coordinator import get_coordinator_reminder
-
-                conversation.add_system_reminder(
-                    get_coordinator_reminder(
-                        iteration,
-                        agent_catalog=agent._agent_catalog_list or None,
-                    )
-                )
-
-            if agent.hook_engine:
-                for note in agent.hook_engine.drain_notifications():
-                    conversation.add_system_reminder(
-                        f"Hook [{note.hook_id}] {note.event}: {note.output}"
-                    )
-
-            deferred_names = agent.registry.get_deferred_tool_names()
-            if deferred_names:
-                conversation.add_system_reminder(
-                    "The following deferred tools are available via ToolSearch. "
-                    "Their schemas are NOT loaded - use ToolSearch with "
-                    'query "select:<name>[,<name>...]" to load tool schemas before calling them:\n'
-                    + "\n".join(deferred_names)
-                )
-
-            compact_result = await auto_compact(
+            await agent._run_hook("turn_start", emit)
+            prepared_call = await turn_preparer.prepare(
                 conversation,
-                agent.client,
-                agent.context_window,
-                agent.session_dir,
-                protocol=agent.protocol,
-                breaker=agent.compact_breaker,
-                recovery=agent.recovery_state,
-                tool_schemas=agent.registry.get_all_schemas(agent.protocol),
-                transcript_path=agent._transcript_path,
+                iteration,
+                emit,
+                cancellation,
             )
-            if isinstance(compact_result, CompactEvent):
-                await emit(
-                    CompactNotification(
-                        before_tokens=compact_result.before_tokens,
-                        message=(
-                            "上下文已压缩（压缩前 "
-                            f"{compact_result.before_tokens:,} tokens）"
-                        ),
-                        boundary=compact_result.boundary,
-                    )
-                )
-                conversation.inject_environment(env_context)
-                memory_content = (
-                    agent.memory_manager.load() if agent.memory_manager else ""
-                )
-                conversation.inject_long_term_memory(
-                    agent.instructions_content, memory_content
-                )
-            elif isinstance(compact_result, str):
-                await emit(ErrorEvent(message=compact_result))
-
-            cancellation.raise_if_cancelled()
-            tools = agent.registry.get_all_schemas(agent.protocol)
             collector = StreamCollector()
             await emit(MessageStarted(turn=iteration))
-            stream = agent.client.stream(conversation, system=system, tools=tools)
+            stream = agent.client.stream(
+                conversation,
+                system=prepared_call.system_prompt,
+                tools=list(prepared_call.tool_schemas),
+            )
             async for event in collector.consume(stream):
                 cancellation.raise_if_cancelled()
                 await emit(event)
@@ -429,7 +431,7 @@ class AgentLoop:
             if response.text:
                 self._last_text = response.text
 
-            await self._run_hook("post_receive", emit, message=response.text)
+            await agent._run_hook("post_receive", emit, message=response.text)
             agent.total_input_tokens += response.input_tokens
             agent.total_output_tokens += response.output_tokens
             await emit(
@@ -453,31 +455,63 @@ class AgentLoop:
                 await self._record_truncated_response(
                     conversation, response, conv_thinking, completed, emit, cancellation
                 )
+                retry_message: str | None = None
+                retry_event: RetryEvent | None = None
                 if not max_tokens_escalated:
                     agent.client.set_max_output_tokens(MAX_TOKENS_CEILING)
                     max_tokens_escalated = True
-                    conversation.add_user_message(
+                    retry_message = (
                         "Output token limit hit. Resume directly from where you stopped. "
                         "Do not apologize or repeat previous content. Pick up mid-thought if needed."
                     )
-                    await emit(RetryEvent(reason="max_tokens escalation"))
-                    continue
-                if output_recoveries < MAX_OUTPUT_TOKENS_RECOVERIES:
+                    retry_event = RetryEvent(reason="max_tokens escalation")
+                elif output_recoveries < MAX_OUTPUT_TOKENS_RECOVERIES:
                     output_recoveries += 1
-                    conversation.add_user_message(
+                    retry_message = (
                         "Output token limit hit. Resume directly from where you stopped. "
                         "Break remaining work into smaller pieces."
                     )
-                    await emit(
-                        RetryEvent(
-                            reason=(
-                                "max_tokens recovery "
-                                f"{output_recoveries}/{MAX_OUTPUT_TOKENS_RECOVERIES}"
-                            )
+                    retry_event = RetryEvent(
+                        reason=(
+                            "max_tokens recovery "
+                            f"{output_recoveries}/{MAX_OUTPUT_TOKENS_RECOVERIES}"
                         )
                     )
+
+                await agent._run_hook("turn_end", emit)
+                if retry_message is not None and retry_event is not None:
+                    directive = control.after_turn(
+                        would_stop=False,
+                        continuation_allowed=self._continuation_allowed(iteration),
+                        continue_reason="retry",
+                    )
+                    await emit(
+                        TurnComplete(
+                            turn=iteration,
+                            will_continue=directive.continue_run,
+                            reason=directive.reason,
+                        )
+                    )
+                    if not directive.continue_run:
+                        return await self._max_turn_result(iteration, emit)
+                    conversation.add_user_message(retry_message)
+                    await emit(retry_event)
+                    await self._deliver_inputs(
+                        conversation,
+                        directive.deliveries,
+                        emit,
+                    )
                     continue
+
                 message = "Output token limit recovery exhausted"
+                control.after_turn(would_stop=False, hard_stop="failed")
+                await emit(
+                    TurnComplete(
+                        turn=iteration,
+                        will_continue=False,
+                        reason="failed",
+                    )
+                )
                 await emit(ErrorEvent(message=message))
                 await emit(LoopComplete(total_turns=iteration))
                 return RunResult(
@@ -494,6 +528,17 @@ class AgentLoop:
                 )
                 self._record_usage_anchor(conversation, response)
                 await self._finish_natural_turn(conversation, response.text, emit)
+                directive = await self._finish_turn(
+                    control,
+                    conversation,
+                    emit,
+                    iteration,
+                    would_stop=True,
+                )
+                if directive.continue_run:
+                    continue
+                if directive.reason == "max_turns":
+                    return await self._max_turn_result(iteration, emit)
                 await emit(LoopComplete(total_turns=iteration))
                 return RunResult(
                     status="completed",
@@ -546,16 +591,104 @@ class AgentLoop:
                     log.debug("Memory recall task failed", exc_info=True)
                 agent._memory_recall_consumed = True
 
-            await self._run_hook("turn_end", emit)
-            await emit(TurnComplete(turn=iteration))
-            if batch.terminate:
-                await self._run_hook("session_end", emit)
-                await emit(LoopComplete(total_turns=iteration))
-                return RunResult(
-                    status="completed",
-                    turns=iteration,
-                    final_text=self._last_text,
-                )
+            await agent._run_hook("turn_end", emit)
+            directive = await self._finish_turn(
+                control,
+                conversation,
+                emit,
+                iteration,
+                would_stop=False,
+                hard_stop="terminate" if batch.terminate else None,
+            )
+            if directive.continue_run:
+                continue
+            if directive.reason == "max_turns":
+                return await self._max_turn_result(iteration, emit)
+            await emit(LoopComplete(total_turns=iteration))
+            return RunResult(
+                status="completed",
+                turns=iteration,
+                final_text=self._last_text,
+            )
+
+    async def _finish_turn(
+        self,
+        control: RunControl,
+        conversation: ConversationManager,
+        emit: EventSink,
+        iteration: int,
+        *,
+        would_stop: bool,
+        hard_stop: HardStopReason | None = None,
+        continue_reason: Literal["tool_calls", "retry"] = "tool_calls",
+    ) -> TurnDirective:
+        directive = control.after_turn(
+            would_stop=would_stop,
+            hard_stop=hard_stop,
+            continuation_allowed=self._continuation_allowed(iteration),
+            continue_reason=continue_reason,
+        )
+        await emit(
+            TurnComplete(
+                turn=iteration,
+                will_continue=directive.continue_run,
+                reason=directive.reason,
+            )
+        )
+        await self._deliver_inputs(conversation, directive.deliveries, emit)
+        return directive
+
+    def _continuation_allowed(self, iteration: int) -> bool:
+        max_iterations = self._agent.max_iterations
+        return max_iterations <= 0 or iteration < max_iterations
+
+    async def _max_turn_result(
+        self,
+        iteration: int,
+        emit: EventSink,
+    ) -> RunResult:
+        max_iterations = self._agent.max_iterations
+        message = f"Agent reached maximum iterations ({max_iterations})"
+        await emit(ErrorEvent(message=message))
+        await emit(LoopComplete(total_turns=iteration))
+        return RunResult(
+            status="max_turns",
+            turns=iteration,
+            final_text=self._last_text,
+            error=message,
+        )
+
+    @staticmethod
+    async def _deliver_inputs(
+        conversation: ConversationManager,
+        deliveries: tuple[QueuedRunInput, ...],
+        emit: EventSink,
+    ) -> None:
+        if not deliveries:
+            return
+        kind = deliveries[0].kind
+        if any(item.kind is not kind for item in deliveries):
+            raise RuntimeError("A delivery batch must contain one run input kind")
+        for item in deliveries:
+            conversation.add_user_message(item.text)
+        await emit(
+            RunInputDelivered(
+                kind=kind,
+                input_ids=tuple(item.input_id for item in deliveries),
+            )
+        )
+
+    @staticmethod
+    def _finalize_result(result: RunResult, control: RunControl) -> RunResult:
+        if control.state is RunControlState.OPEN:
+            control.seal(_result_reason(result))
+        undelivered = control.recover_undelivered()
+        if not undelivered:
+            return result
+        return replace(
+            result,
+            undelivered_inputs=(*result.undelivered_inputs, *undelivered),
+        )
 
     async def _record_truncated_response(
         self,
@@ -610,25 +743,10 @@ class AgentLoop:
                     agent.client, conversation, agent.protocol
                 )
             )
-        await self._run_hook("turn_end", emit)
-        await self._run_hook("session_end", emit)
+        await agent._run_hook("turn_end", emit)
         if agent.file_history is not None:
             summary = text[:60] + "..." if len(text) > 60 else text
             agent.file_history.make_snapshot(len(conversation.history), summary)
-
-    async def _run_hook(
-        self,
-        event: str,
-        emit: EventSink,
-        **kwargs: str | dict[str, Any],
-    ) -> None:
-        agent = self._agent
-        if agent.hook_engine is None:
-            return
-        context = agent._build_hook_context(event, **kwargs)
-        await agent.hook_engine.run_hooks(event, context)
-        for hook_event in agent._drain_hook_events():
-            await emit(hook_event)
 
     @staticmethod
     def _record_usage_anchor(

@@ -142,16 +142,16 @@ async def _run_prompt(config, permission_mode, hook_engine, prompt: str, output_
         PermissionChecker,
         RuleEngine,
     )
-    from mewcode.tools import create_default_registry
+    from mewcode.extensions import (
+        BuiltinRuntimeBindings,
+        ToolProfile,
+        create_builtin_extension_host,
+    )
+    from mewcode.runtime import AgentRuntime, AgentRuntimeRequest
     from mewcode.agents.loader import AgentLoader
     from mewcode.agents.task_manager import TaskManager
     from mewcode.agents.trace import TraceManager
-    from mewcode.tools.agent_tool import AgentTool
-    from mewcode.tools.impl.tool_search import ToolSearchTool
     from mewcode.teams.manager import TeamManager
-    from mewcode.teams.models import BackendType
-    from mewcode.tools.team_create import TeamCreateTool
-    from mewcode.tools.team_delete import TeamDeleteTool
     from mewcode.worktree import WorktreeManager
     from mewcode.config import WorktreeConfig
 
@@ -181,20 +181,6 @@ async def _run_prompt(config, permission_mode, hook_engine, prompt: str, output_
     )
 
     instructions = load_instructions(work_dir)
-    registry = create_default_registry()
-    registry.register(ToolSearchTool(registry, protocol=provider.protocol))
-
-    agent = Agent(
-        client=client,
-        registry=registry,
-        protocol=provider.protocol,
-        work_dir=work_dir,
-        permission_checker=checker,
-        context_window=provider.get_context_window(),
-        instructions_content=instructions,
-        hook_engine=hook_engine,
-    )
-
     wt_cfg = config.worktree or WorktreeConfig()
     wt_manager = WorktreeManager(
         repo_root=work_dir,
@@ -206,177 +192,195 @@ async def _run_prompt(config, permission_mode, hook_engine, prompt: str, output_
     agent_loader.load_all()
     team_manager = TeamManager(worktree_manager=wt_manager, trace_manager=trace_manager)
 
-    agent_tool = AgentTool(
-        agent_loader=agent_loader,
-        task_manager=task_manager,
-        trace_manager=trace_manager,
-        parent_agent=agent,
-        enable_fork=config.enable_fork,
-        provider_config=provider,
-        worktree_manager=wt_manager,
-        team_manager=team_manager,
-    )
-    registry.register(agent_tool)
-    registry.register(TeamCreateTool(
-        team_manager=team_manager,
-        parent_agent=agent,
-        teammate_mode="in-process",
-        is_interactive=False,
-        enable_coordinator_mode=config.enable_coordinator_mode,
-    ))
-    registry.register(TeamDeleteTool(team_manager=team_manager, parent_agent=agent))
-
-    from mewcode.tools.synthetic_output import SyntheticOutputTool
-    from mewcode.tools.task_stop import TaskStopTool
-
-    registry.register(SyntheticOutputTool())
-    registry.register(TaskStopTool(team_manager=team_manager))
-
-    # coordinator 模式由配置决定，开了就从第一轮起收窄工具集
-    if config.enable_coordinator_mode:
-        from mewcode.agents.tool_filter import apply_coordinator_filter
-
-        agent.enable_coordinator_mode = True
-        agent.registry = apply_coordinator_filter(agent.registry)
-
-    def drain_notifications() -> list[str]:
-        notes: list[str] = []
-        for t in task_manager.poll_completed():
-            notes.append(
-                f"<task-notification>\n<task_id>{t.id}</task_id>\n"
-                f"<status>{t.status}</status>\n<result>{t.result}</result>\n"
-                f"</task-notification>"
-            )
-        notes.extend(team_manager.drain_lead_mailbox())
-        return notes
-
-    def drain_mailbox_only() -> list[str]:
-        return team_manager.drain_lead_mailbox()
-
-    agent.notification_fn = drain_mailbox_only
-
-    # 使用事件驱动的 agent.run()，支持 text 和 stream-json 两种输出格式
-    conv = ConversationManager()
-    conv.add_user_message(prompt)
-
-    start = time.monotonic()
-    text_buf = ""
-    total_input = 0
-    total_output = 0
-    tool_calls: list[dict] = []
-
-    async for event in agent.run(conv):
-        if isinstance(event, StreamText):
-            text_buf += event.text
-            if is_json:
-                emit_json({"type": "assistant", "text": event.text})
-
-        elif isinstance(event, ThinkingText):
-            if is_json:
-                emit_json({"type": "thinking", "text": event.text})
-
-        elif isinstance(event, ToolUseEvent):
-            tool_calls.append({"name": event.tool_name, "is_error": False})
-            if is_json:
-                emit_json({
-                    "type": "tool_use",
-                    "tool_name": event.tool_name,
-                    "tool_id": event.tool_id,
-                    "args": event.arguments,
-                })
-
-        elif isinstance(event, ToolResultEvent):
-            # 回填最后一个同名 tool_call 的 is_error
-            if tool_calls:
-                tool_calls[-1]["is_error"] = event.is_error
-            if is_json:
-                emit_json({
-                    "type": "tool_result",
-                    "tool_name": event.tool_name,
-                    "tool_id": event.tool_id,
-                    "output": event.output,
-                    "is_error": event.is_error,
-                    "elapsed": round(event.elapsed, 3),
-                })
-
-        elif isinstance(event, UsageEvent):
-            total_input = event.input_tokens
-            total_output = event.output_tokens
-            if is_json:
-                emit_json({
-                    "type": "usage",
-                    "input_tokens": event.input_tokens,
-                    "output_tokens": event.output_tokens,
-                })
-
-        elif isinstance(event, TurnComplete):
-            if is_json:
-                emit_json({"type": "turn_complete", "turn": event.turn})
-
-        elif isinstance(event, LoopComplete):
-            # 最终结果：stream-json 输出 result 行，text 模式直接打印文本
-            elapsed_ms = int((time.monotonic() - start) * 1000)
-            if is_json:
-                emit_json({
-                    "type": "result",
-                    "result": text_buf,
-                    "duration_ms": elapsed_ms,
-                    "num_turns": event.total_turns,
-                    "tool_calls": tool_calls,
-                    "usage": {
-                        "input_tokens": total_input,
-                        "output_tokens": total_output,
-                    },
-                    "stop_reason": "end_turn",
-                })
-            else:
-                print(text_buf, end="", flush=True)
-            break
-
-        elif isinstance(event, ErrorEvent):
-            if is_json:
-                emit_json({"type": "error", "message": event.message})
-            else:
-                print(f"Error: {event.message}", file=sys.stderr, flush=True)
-
-        elif isinstance(event, CompactNotification):
-            if is_json:
-                emit_json({"type": "compact", "message": event.message})
-
-        elif isinstance(event, RetryEvent):
-            if is_json:
-                emit_json({"type": "retry", "reason": event.reason})
-
-        elif isinstance(event, PermissionRequest):
-            # -p 非交互模式：自动批准所有权限请求
-            event.future.set_result(PermissionResponse.ALLOW)
-
-    # 如果有 team 在运行，轮询等待 teammate 完成
-    if not team_manager._teams:
-        return
-
-    for i in range(90):
-        await asyncio.sleep(2)
-        running = {k: not t.done() for k, t in task_manager._async_tasks.items()}
-        completed_ids = [t.id for t in task_manager._tasks.values() if t.status != "running"]
-        print(f"[poll {i}] running={running} completed={completed_ids} teams={list(team_manager._teams.keys())} queue_size={task_manager._notify_queue.qsize()}", file=sys.stderr, flush=True)
-        notes = drain_notifications()
-        if not notes:
-            has_running = any(v for v in running.values())
-            if not has_running:
-                print(f"[poll {i}] no running tasks, breaking", file=sys.stderr, flush=True)
-                break
-            continue
-        for note in notes:
-            conv.add_system_reminder(note)
-        # 后续 team 轮询仍用 run_to_completion，避免重复事件循环
-        last_result = await agent.run_to_completion(
-            "Teammate notifications received. Process them and continue.", conv
+    def create_agent(registry):
+        return Agent(
+            client=client,
+            registry=registry,
+            protocol=provider.protocol,
+            work_dir=work_dir,
+            permission_checker=checker,
+            context_window=provider.get_context_window(),
+            instructions_content=instructions,
+            hook_engine=hook_engine,
         )
-        if is_json:
-            emit_json({"type": "assistant", "text": last_result})
-        else:
-            print(last_result, flush=True)
+
+    def create_bindings(agent, registry):
+        return BuiltinRuntimeBindings(
+            agent=agent,
+            registry=registry,
+            protocol=provider.protocol,
+            agent_loader=agent_loader,
+            task_manager=task_manager,
+            trace_manager=trace_manager,
+            provider_config=provider,
+            worktree_manager=wt_manager,
+            team_manager=team_manager,
+            enable_fork=config.enable_fork,
+            teammate_mode="in-process",
+            is_interactive=False,
+            enable_coordinator_mode=config.enable_coordinator_mode,
+        )
+
+    runtime = await AgentRuntime.open(
+        AgentRuntimeRequest(
+            profile=ToolProfile.PROMPT_LEAD,
+            work_dir=work_dir,
+            agent_factory=create_agent,
+            bindings_factory=create_bindings,
+        ),
+        extension_host=create_builtin_extension_host(),
+    )
+    agent = runtime.agent
+
+    async def run_active_runtime() -> None:
+        # coordinator 模式由配置决定，开了就从第一轮起收窄工具集
+        if config.enable_coordinator_mode:
+            from mewcode.agents.tool_filter import apply_coordinator_filter
+
+            agent.enable_coordinator_mode = True
+            agent.registry = apply_coordinator_filter(agent.registry)
+
+        def drain_notifications() -> list[str]:
+            notes: list[str] = []
+            for t in task_manager.poll_completed():
+                notes.append(
+                    f"<task-notification>\n<task_id>{t.id}</task_id>\n"
+                    f"<status>{t.status}</status>\n<result>{t.result}</result>\n"
+                    f"</task-notification>"
+                )
+            notes.extend(team_manager.drain_lead_mailbox())
+            return notes
+
+        def drain_mailbox_only() -> list[str]:
+            return team_manager.drain_lead_mailbox()
+
+        agent.notification_fn = drain_mailbox_only
+
+        # 使用事件驱动的 agent.run()，支持 text 和 stream-json 两种输出格式
+        conv = ConversationManager()
+        conv.add_user_message(prompt)
+
+        start = time.monotonic()
+        text_buf = ""
+        total_input = 0
+        total_output = 0
+        tool_calls: list[dict] = []
+
+        async for event in agent.run(conv):
+            if isinstance(event, StreamText):
+                text_buf += event.text
+                if is_json:
+                    emit_json({"type": "assistant", "text": event.text})
+
+            elif isinstance(event, ThinkingText):
+                if is_json:
+                    emit_json({"type": "thinking", "text": event.text})
+
+            elif isinstance(event, ToolUseEvent):
+                tool_calls.append({"name": event.tool_name, "is_error": False})
+                if is_json:
+                    emit_json({
+                        "type": "tool_use",
+                        "tool_name": event.tool_name,
+                        "tool_id": event.tool_id,
+                        "args": event.arguments,
+                    })
+
+            elif isinstance(event, ToolResultEvent):
+                # 回填最后一个同名 tool_call 的 is_error
+                if tool_calls:
+                    tool_calls[-1]["is_error"] = event.is_error
+                if is_json:
+                    emit_json({
+                        "type": "tool_result",
+                        "tool_name": event.tool_name,
+                        "tool_id": event.tool_id,
+                        "output": event.output,
+                        "is_error": event.is_error,
+                        "elapsed": round(event.elapsed, 3),
+                    })
+
+            elif isinstance(event, UsageEvent):
+                total_input = event.input_tokens
+                total_output = event.output_tokens
+                if is_json:
+                    emit_json({
+                        "type": "usage",
+                        "input_tokens": event.input_tokens,
+                        "output_tokens": event.output_tokens,
+                    })
+
+            elif isinstance(event, TurnComplete):
+                if is_json:
+                    emit_json({"type": "turn_complete", "turn": event.turn})
+
+            elif isinstance(event, LoopComplete):
+                # 最终结果：stream-json 输出 result 行，text 模式直接打印文本
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                if is_json:
+                    emit_json({
+                        "type": "result",
+                        "result": text_buf,
+                        "duration_ms": elapsed_ms,
+                        "num_turns": event.total_turns,
+                        "tool_calls": tool_calls,
+                        "usage": {
+                            "input_tokens": total_input,
+                            "output_tokens": total_output,
+                        },
+                        "stop_reason": "end_turn",
+                    })
+                else:
+                    print(text_buf, end="", flush=True)
+                break
+
+            elif isinstance(event, ErrorEvent):
+                if is_json:
+                    emit_json({"type": "error", "message": event.message})
+                else:
+                    print(f"Error: {event.message}", file=sys.stderr, flush=True)
+
+            elif isinstance(event, CompactNotification):
+                if is_json:
+                    emit_json({"type": "compact", "message": event.message})
+
+            elif isinstance(event, RetryEvent):
+                if is_json:
+                    emit_json({"type": "retry", "reason": event.reason})
+
+            elif isinstance(event, PermissionRequest):
+                # -p 非交互模式：自动批准所有权限请求
+                event.future.set_result(PermissionResponse.ALLOW)
+
+        # 如果有 team 在运行，轮询等待 teammate 完成
+        if not team_manager._teams:
+            return
+
+        for i in range(90):
+            await asyncio.sleep(2)
+            running = {k: not t.done() for k, t in task_manager._async_tasks.items()}
+            completed_ids = [t.id for t in task_manager._tasks.values() if t.status != "running"]
+            print(f"[poll {i}] running={running} completed={completed_ids} teams={list(team_manager._teams.keys())} queue_size={task_manager._notify_queue.qsize()}", file=sys.stderr, flush=True)
+            notes = drain_notifications()
+            if not notes:
+                has_running = any(v for v in running.values())
+                if not has_running:
+                    print(f"[poll {i}] no running tasks, breaking", file=sys.stderr, flush=True)
+                    break
+                continue
+            for note in notes:
+                conv.add_system_reminder(note)
+            # 后续 team 轮询仍用 run_to_completion，避免重复事件循环
+            last_result = await agent.run_to_completion(
+                "Teammate notifications received. Process them and continue.", conv
+            )
+            if is_json:
+                emit_json({"type": "assistant", "text": last_result})
+            else:
+                print(last_result, flush=True)
+
+    async with runtime:
+        await run_active_runtime()
 
 
 def _parse_teammate_flags(args: list[str]) -> tuple[str, str] | None:
@@ -405,76 +409,77 @@ def _parse_teammate_flags(args: list[str]) -> tuple[str, str] | None:
     return team_name, agent_name
 
 
-async def _build_teammate_registry(
+async def _open_teammate_runtime(
     work_dir: str,
     protocol: str,
-    team_manager: "TeamManager",
+    client,
+    permission_checker,
+    context_window: int,
+    instructions_content: str,
+    team_manager,
     team_name: str,
     agent_name: str,
-    mcp_servers: list,
 ):
-    """组装队友工具集。
+    """创建拥有独立 ExtensionSession 的外部队友 Runtime。
 
-    文件与命令工具、工具检索、Worktree 切换、Skill、MCP 扩展，再加上团队协作工具
-    （按自己的名字发消息，以及读写团队共享任务板）。任务板按团队名解析到同一份
-    tasks.json，所以队友之间看到的是同一张表。
-
-    Agent 不在其中，调用树到队友这一层为止，队友不再往下派子 Agent。
-    TeamCreate 与 TeamDelete 也不在其中，组建和解散团队是 Lead 的职责。
+    MCP 是运行期动态贡献，仍由 worker boundary 在 Runtime 激活后注册并在
+    Runtime 关闭前注销。
     """
+    from mewcode.agent import Agent
     from mewcode.config import WorktreeConfig
-    from mewcode.mcp import MCPManager
-    from mewcode.tools import create_default_registry
-    from mewcode.tools.enter_worktree import EnterWorktreeTool
-    from mewcode.tools.exit_worktree import ExitWorktreeTool
-    from mewcode.tools.impl.tool_search import ToolSearchTool
-    from mewcode.tools.install_skill import InstallSkillTool
-    from mewcode.tools.load_skill import LoadSkill
-    from mewcode.tools.send_message import SendMessageTool
-    from mewcode.tools.synthetic_output import SyntheticOutputTool
-    from mewcode.tools.task_create import TaskCreateTool
-    from mewcode.tools.task_get import TaskGetTool
-    from mewcode.tools.task_list import TaskListTool
-    from mewcode.tools.task_update import TaskUpdateTool
+    from mewcode.extensions import (
+        BuiltinRuntimeBindings,
+        ToolProfile,
+        create_builtin_extension_host,
+    )
+    from mewcode.runtime import AgentRuntime, AgentRuntimeRequest
+    from mewcode.skills.loader import SkillLoader
+    from mewcode.tools import ToolRegistry
     from mewcode.worktree import WorktreeManager
-
-    registry = create_default_registry()
-    registry.register(ToolSearchTool(registry, protocol=protocol))
-    registry.register(SyntheticOutputTool())
 
     wt_manager = WorktreeManager(
         repo_root=work_dir,
         symlink_directories=WorktreeConfig().symlink_directories,
     )
-    registry.register(EnterWorktreeTool(worktree_manager=wt_manager))
-    registry.register(ExitWorktreeTool(worktree_manager=wt_manager))
+    skill_loader = SkillLoader(work_dir)
+    skill_loader.load_all()
 
-    # 未注入执行器，声明 fork 模式的 skill 会退回 inline 执行
-    registry.register(LoadSkill())
-    registry.register(InstallSkillTool())
+    def create_agent(registry: ToolRegistry) -> Agent:
+        return Agent(
+            client=client,
+            registry=registry,
+            protocol=protocol,
+            work_dir=work_dir,
+            permission_checker=permission_checker,
+            context_window=context_window,
+            instructions_content=instructions_content,
+        )
 
-    registry.register(SendMessageTool(
-        team_manager=team_manager,
-        team_name=team_name,
-        from_agent_id=agent_name,
-        from_agent_name=agent_name,
-    ))
-    registry.register(TaskCreateTool(team_manager, team_name, agent_name))
-    registry.register(TaskGetTool(team_manager, team_name))
-    registry.register(TaskListTool(team_manager, team_name))
-    registry.register(TaskUpdateTool(team_manager, team_name))
+    def create_bindings(
+        agent: Agent,
+        registry: ToolRegistry,
+    ) -> BuiltinRuntimeBindings:
+        return BuiltinRuntimeBindings(
+            agent=agent,
+            registry=registry,
+            protocol=protocol,
+            worktree_manager=wt_manager,
+            team_manager=team_manager,
+            skill_loader=skill_loader,
+            team_name=team_name,
+            agent_name=agent_name,
+            from_agent_id=agent_name,
+        )
 
-    if mcp_servers:
-        try:
-            manager = MCPManager()
-            manager.load_configs(mcp_servers)
-            result = await manager.register_all_tools(registry)
-            for err in result.errors:
-                print(f"MCP warning: {err}", file=sys.stderr)
-        except Exception as e:  # MCP 连不上不应该拖垮队友进程
-            print(f"MCP setup failed: {e}", file=sys.stderr)
-
-    return registry
+    return await AgentRuntime.open(
+        AgentRuntimeRequest(
+            profile=ToolProfile.TEAMMATE_WORKER,
+            work_dir=work_dir,
+            agent_factory=create_agent,
+            bindings_factory=create_bindings,
+        ),
+        extension_host=create_builtin_extension_host(),
+    )
 
 
 async def _run_teammate(team_name: str, agent_name: str) -> None:
@@ -484,7 +489,6 @@ async def _run_teammate(team_name: str, agent_name: str) -> None:
     （lead 已在磁盘上创建）→ 建子 agent → 注册成员名字 → 跑队友主循环，
     首个任务由 lead 在 spawn 前写进邮箱、worker 首次空闲轮询取出。
     """
-    from mewcode.agent import Agent
     from mewcode.client import create_client, resolve_context_window
     from mewcode.memory.instructions import load_instructions
     from mewcode.permissions import (
@@ -537,15 +541,6 @@ async def _run_teammate(team_name: str, agent_name: str) -> None:
     name_registry.register(agent_name, agent_name)
     name_registry.register(LEAD_NAME, team.lead_agent_id)
 
-    registry = await _build_teammate_registry(
-        work_dir=work_dir,
-        protocol=provider.protocol,
-        team_manager=team_manager,
-        team_name=team_name,
-        agent_name=agent_name,
-        mcp_servers=config.mcp_servers,
-    )
-
     checker = PermissionChecker(
         detector=DangerousCommandDetector(),
         sandbox=PathSandbox(work_dir),
@@ -553,34 +548,57 @@ async def _run_teammate(team_name: str, agent_name: str) -> None:
         mode=PermissionMode.BYPASS,
     )
 
-    agent = Agent(
-        client=client,
-        registry=registry,
-        protocol=provider.protocol,
+    runtime = await _open_teammate_runtime(
         work_dir=work_dir,
+        protocol=provider.protocol,
+        client=client,
         permission_checker=checker,
         context_window=provider.get_context_window(),
         instructions_content=load_instructions(work_dir),
-    )
-
-    # 不传初始 prompt：lead 已把首个任务写进邮箱，主循环首次轮询即可取到，
-    # 避免重复注入一条 user 消息。
-    print(f"[teammate {team_name}/{agent_name}] booted, awaiting tasks", file=sys.stderr)
-    handle = spawn_inprocess_teammate(
-        agent=agent,
-        prompt="",
-        name=agent_name,
+        team_manager=team_manager,
         team_name=team_name,
-        mailbox=mailbox,
-        # 外部 worker 把 idle 通知写到 lead 实际读取的键，保证回传对得上
-        lead_key=team.lead_agent_id,
+        agent_name=agent_name,
     )
+    agent = runtime.agent
+    mcp_manager = None
+
     try:
-        await handle.task
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        handle.cancel()
+        if config.mcp_servers:
+            try:
+                from mewcode.mcp import MCPManager
+
+                mcp_manager = MCPManager()
+                mcp_manager.load_configs(config.mcp_servers)
+                result = await mcp_manager.register_all_tools(runtime.registry)
+                for error in result.errors:
+                    print(f"MCP warning: {error}", file=sys.stderr)
+            except Exception as error:
+                print(f"MCP setup failed: {error}", file=sys.stderr)
+
+        # 不传初始 prompt：lead 已把首个任务写进邮箱，主循环首次轮询即可取到，
+        # 避免重复注入一条 user 消息。
+        print(
+            f"[teammate {team_name}/{agent_name}] booted, awaiting tasks",
+            file=sys.stderr,
+        )
+        handle = spawn_inprocess_teammate(
+            agent=agent,
+            prompt="",
+            name=agent_name,
+            team_name=team_name,
+            mailbox=mailbox,
+            # 外部 worker 把 idle 通知写到 lead 实际读取的键，保证回传对得上
+            lead_key=team.lead_agent_id,
+        )
+        try:
+            await handle.task
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            handle.cancel()
+    finally:
+        if mcp_manager is not None:
+            await mcp_manager.shutdown()
+        await runtime.aclose()
 
 
 if __name__ == "__main__":
     main()
-

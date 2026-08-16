@@ -301,3 +301,118 @@ class TestMCPManagerPartialFailure:
         assert len(result.errors) == 1
         assert "bad" in result.errors[0]
         assert registry.get("mcp_good_test_tool") is not None
+
+
+class _ServerTool:
+    description = "MCP manager ownership test tool"
+    should_defer = False
+
+    def __init__(self, name: str, server_name: str) -> None:
+        self.name = name
+        self.server_name = server_name
+
+
+@pytest.mark.asyncio
+async def test_mcp_manager_tracks_provenance_and_unregisters_before_shutdown(
+    monkeypatch,
+) -> None:
+    from mewcode.mcp.manager import ConnectResult, MCPManager
+    from mewcode.tools import ContributionOwner, ToolRegistry
+
+    registry = ToolRegistry()
+    registry.register(
+        _ServerTool("Builtin", "builtin"),
+        owner=ContributionOwner(
+            extension_id="mewcode.builtin-tools",
+            source="builtin",
+            runtime_id="runtime-a",
+            generation=2,
+        ),
+    )
+    manager = MCPManager()
+
+    async def connect_all() -> ConnectResult:
+        return ConnectResult(tools=[_ServerTool("mcp_alpha_search", "alpha")])
+
+    monkeypatch.setattr(manager, "connect_all", connect_all)
+
+    result = await manager.register_all_tools(registry)
+
+    assert result.errors == []
+    contribution = registry.list_contributions()[1]
+    assert contribution.owner == ContributionOwner(
+        extension_id="mcp.alpha",
+        source="mcp:alpha",
+        runtime_id="runtime-a",
+        generation=2,
+    )
+
+    await manager.shutdown()
+    await manager.shutdown()
+
+    assert [item.name for item in registry.list_contributions()] == ["Builtin"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_registration_conflict_rolls_back_current_batch(monkeypatch) -> None:
+    from mewcode.mcp.manager import ConnectResult, MCPManager
+    from mewcode.tools import ToolRegistry
+
+    registry = ToolRegistry()
+    existing = _ServerTool("Existing", "legacy")
+    registry.register(existing)
+    manager = MCPManager()
+
+    async def connect_all() -> ConnectResult:
+        return ConnectResult(
+            tools=[
+                _ServerTool("First", "alpha"),
+                _ServerTool("Existing", "alpha"),
+            ]
+        )
+
+    monkeypatch.setattr(manager, "connect_all", connect_all)
+
+    result = await manager.register_all_tools(registry)
+
+    assert len(result.errors) == 1
+    assert "Existing" in result.errors[0]
+    assert registry.get("First") is None
+    assert registry.get("Existing") is existing
+
+
+
+@pytest.mark.asyncio
+async def test_mcp_registration_conflict_does_not_block_later_server(
+    monkeypatch,
+) -> None:
+    from mewcode.mcp.manager import ConnectResult, MCPManager
+    from mewcode.tools import ToolRegistry
+
+    registry = ToolRegistry()
+    original = _ServerTool("Existing", "builtin")
+    registry.register(original)
+    manager = MCPManager()
+
+    async def connect_all() -> ConnectResult:
+        return ConnectResult(
+            tools=[
+                _ServerTool("First", "alpha"),
+                _ServerTool("Existing", "alpha"),
+                _ServerTool("Later", "beta"),
+            ]
+        )
+
+    monkeypatch.setattr(manager, "connect_all", connect_all)
+
+    result = await manager.register_all_tools(registry)
+
+    assert len(result.errors) == 1
+    assert registry.get("First") is None
+    assert registry.get("Existing") is original
+    assert registry.get("Later") is not None
+
+    await manager.shutdown()
+
+    assert registry.get("Later") is None
+    assert registry.get("Existing") is original

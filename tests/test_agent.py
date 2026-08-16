@@ -118,7 +118,11 @@ async def test_single_step_tool_call():
     assert len(c["tool_use"]) == 1
     assert c["tool_use"][0].tool_name == "ReadFile"
     assert len(c["tool_result"]) == 1
-    assert len(c["turn"]) == 1
+    assert len(c["turn"]) == 2
+    assert [(event.reason, event.will_continue) for event in c["turn"]] == [
+        ("tool_calls", True),
+        ("natural", False),
+    ]
     assert len(c["loop"]) == 1
     assert c["loop"][0].total_turns == 2
 
@@ -161,7 +165,12 @@ async def test_multi_step_autonomous():
     assert len(c["tool_use"]) == 2
     assert c["tool_use"][0].tool_name == "WriteFile"
     assert c["tool_use"][1].tool_name == "ReadFile"
-    assert len(c["turn"]) == 2
+    assert len(c["turn"]) == 3
+    assert [(event.reason, event.will_continue) for event in c["turn"]] == [
+        ("tool_calls", True),
+        ("tool_calls", True),
+        ("natural", False),
+    ]
     assert len(c["loop"]) == 1
     assert c["loop"][0].total_turns == 3
     # 验证文件确实被创建了
