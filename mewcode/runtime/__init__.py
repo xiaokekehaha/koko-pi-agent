@@ -1,10 +1,9 @@
-from mewcode.runtime.agent_loop import (
-    AgentLoop,
+from mewcode.runtime.agent_loop import AgentLoop
+from mewcode.runtime.agent_run import (
     AgentRun,
     RunCancellation,
     RunRequest,
     RunStatus,
-    StreamingEventAdapter,
 )
 from mewcode.runtime.agent_runtime import AgentRuntime, AgentRuntimeRequest
 from mewcode.runtime.events import (
@@ -48,6 +47,7 @@ from mewcode.runtime.run_control import (
     RunInputReceipt,
     TurnDirective,
 )
+from mewcode.runtime.streaming_adapter import StreamingEventAdapter
 from mewcode.runtime.tool_pipeline import (
     ApprovalAdapter,
     CompletedAssistantMessage,

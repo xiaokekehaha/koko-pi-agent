@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
-from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field, replace
-from enum import Enum
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from mewcode.conversation import ConversationManager, ToolUseBlock
@@ -24,41 +21,39 @@ from mewcode.runtime.events import (
     RunInputDelivered,
     RunResult,
     RunStarted,
-    StreamText,
-    ThinkingText,
-    ToolUseEvent,
     TurnComplete,
     TurnStarted,
     UsageEvent,
+)
+from mewcode.runtime.agent_run import (  # noqa: F401 - compatibility re-exports
+    AgentRun,
+    RunCancellation,
+    RunRequest,
+    RunStatus,
+    finalize_run_result,
+)
+from mewcode.runtime.model_stream import (  # noqa: F401 - compatibility re-export
+    LLMResponse,
+    StreamCollector,
+    ThinkingBlock,
 )
 from mewcode.runtime.run_control import (
     HardStopReason,
     QueuedRunInput,
     RunControl,
-    RunControlState,
-    RunInputClosedError,
-    RunInputKind,
-    RunInputReceipt,
     TurnDirective,
-    TurnReason,
+)
+from mewcode.runtime.streaming_adapter import (  # noqa: F401 - compatibility re-export
+    StreamingEventAdapter,
 )
 from mewcode.runtime.tool_pipeline import (
     ApprovalAdapter,
     CompletedAssistantMessage,
     ToolBatchRequest,
+    ToolBatchResult,
     ToolPipeline,
 )
 from mewcode.runtime.turn_preparer import TurnPreparer
-from mewcode.tools.base import (
-    StreamEnd,
-    StreamEvent,
-    TextDelta,
-    ThinkingComplete,
-    ThinkingDelta,
-    ToolCallComplete,
-    ToolCallDelta,
-    ToolCallStart,
-)
 
 log = logging.getLogger(__name__)
 
@@ -68,224 +63,11 @@ MEMORY_EXTRACTION_INTERVAL = 1
 
 
 @dataclass
-class ThinkingBlock:
-    thinking: str
-    signature: str
+class _OutputRecoveryState:
+    """Tracks truncation recovery across turns within one run."""
 
-
-@dataclass
-class LLMResponse:
-    text: str = ""
-    tool_calls: list[ToolCallComplete] = field(default_factory=list)
-    thinking_blocks: list[ThinkingBlock] = field(default_factory=list)
-    stop_reason: str = ""
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read: int = 0
-    cache_creation: int = 0
-
-
-class StreamCollector:
-    def __init__(self) -> None:
-        self.response = LLMResponse()
-
-    async def consume(
-        self, stream: AsyncIterator[StreamEvent]
-    ) -> AsyncIterator[AgentEvent]:
-        async for event in stream:
-            if isinstance(event, TextDelta):
-                self.response.text += event.text
-                yield StreamText(text=event.text)
-            elif isinstance(event, ThinkingDelta):
-                yield ThinkingText(text=event.text)
-            elif isinstance(event, ThinkingComplete):
-                self.response.thinking_blocks.append(
-                    ThinkingBlock(
-                        thinking=event.thinking,
-                        signature=event.signature,
-                    )
-                )
-            elif isinstance(event, (ToolCallStart, ToolCallDelta)):
-                continue
-            elif isinstance(event, ToolCallComplete):
-                self.response.tool_calls.append(event)
-                yield ToolUseEvent(
-                    tool_name=event.tool_name,
-                    tool_id=event.tool_id,
-                    arguments=event.arguments,
-                )
-            elif isinstance(event, StreamEnd):
-                self.response.stop_reason = event.stop_reason
-                self.response.input_tokens = event.input_tokens
-                self.response.output_tokens = event.output_tokens
-                self.response.cache_read = event.cache_read
-                self.response.cache_creation = event.cache_creation
-
-
-class RunStatus(Enum):
-    CREATED = "created"
-    RUNNING = "running"
-    CANCELLING = "cancelling"
-    SETTLING = "settling"
-    IDLE = "idle"
-
-
-class RunCancellation:
-    def __init__(self) -> None:
-        self._event = asyncio.Event()
-
-    @property
-    def cancelled(self) -> bool:
-        return self._event.is_set()
-
-    def cancel(self) -> None:
-        self._event.set()
-
-    def raise_if_cancelled(self) -> None:
-        if self.cancelled:
-            raise asyncio.CancelledError
-
-
-@dataclass(frozen=True)
-class RunRequest:
-    conversation: ConversationManager
-
-
-def _result_reason(result: RunResult) -> TurnReason:
-    if result.status == "cancelled":
-        return "cancelled"
-    if result.status == "failed":
-        return "failed"
-    if result.status == "max_turns":
-        return "max_turns"
-    return "natural"
-
-
-class AgentRun:
-    def __init__(
-        self,
-        loop: AgentLoop,
-        request: RunRequest,
-        emit: EventSink,
-        on_idle: Callable[[AgentRun], None],
-    ) -> None:
-        self.run_id = uuid.uuid4().hex
-        self._loop = loop
-        self._request = request
-        self._emit = emit
-        self._on_idle = on_idle
-        self._cancellation = RunCancellation()
-        self._control = RunControl()
-        self._status = RunStatus.CREATED
-        self._result: RunResult | None = None
-        self._idle = asyncio.Event()
-        self._task: asyncio.Task[RunResult] | None = None
-
-    @property
-    def status(self) -> RunStatus:
-        return self._status
-
-    @property
-    def result(self) -> RunResult | None:
-        return self._result
-
-    def steer(self, text: str) -> RunInputReceipt:
-        return self._enqueue_input(RunInputKind.STEERING, text)
-
-    def follow_up(self, text: str) -> RunInputReceipt:
-        return self._enqueue_input(RunInputKind.FOLLOW_UP, text)
-
-    def start(self) -> None:
-        if self._task is not None:
-            raise RuntimeError("AgentRun has already started")
-        self._task = asyncio.create_task(self._drive())
-        self._task.add_done_callback(self._handle_task_done)
-
-    def cancel(self) -> None:
-        if self._status in (
-            RunStatus.CANCELLING,
-            RunStatus.SETTLING,
-            RunStatus.IDLE,
-        ):
-            return
-        self._control.seal("cancelled")
-        self._cancellation.cancel()
-        self._status = RunStatus.CANCELLING
-        if self._task is not None and not self._task.done():
-            self._task.cancel()
-
-    async def wait_until_idle(self) -> RunResult:
-        if self._task is None:
-            raise RuntimeError("AgentRun has not started")
-        await self._idle.wait()
-        if self._task is not asyncio.current_task() and not self._task.cancelled():
-            await asyncio.shield(self._task)
-        assert self._result is not None
-        return self._result
-
-    async def _drive(self) -> RunResult:
-        self._status = RunStatus.RUNNING
-        try:
-            self._result = await self._loop.run(
-                self._request,
-                self._emit,
-                self._cancellation,
-                self.run_id,
-                self._control,
-            )
-        except asyncio.CancelledError:
-            self._result = RunResult(status="cancelled", turns=0, final_text="")
-        except Exception as exc:  # noqa: BLE001 - run boundary normalizes failures
-            self._result = RunResult(
-                status="failed", turns=0, final_text="", error=str(exc)
-            )
-        finally:
-            assert self._result is not None
-            self._settle(self._result)
-        assert self._result is not None
-        return self._result
-
-    def _handle_task_done(self, task: asyncio.Task[RunResult]) -> None:
-        if self._idle.is_set():
-            return
-        if task.cancelled():
-            result = RunResult(status="cancelled", turns=0, final_text="")
-        else:
-            try:
-                result = task.result()
-            except Exception as exc:  # noqa: BLE001 - task boundary fallback
-                result = RunResult(
-                    status="failed", turns=0, final_text="", error=str(exc)
-                )
-        self._settle(result)
-
-    def _settle(self, result: RunResult) -> None:
-        if self._idle.is_set():
-            return
-        if self._control.state is RunControlState.OPEN:
-            self._control.seal(_result_reason(result))
-        undelivered = self._control.recover_undelivered()
-        if undelivered:
-            result = replace(
-                result,
-                undelivered_inputs=(*result.undelivered_inputs, *undelivered),
-            )
-        self._result = result
-        self._status = RunStatus.SETTLING
-        self._on_idle(self)
-        self._status = RunStatus.IDLE
-        self._idle.set()
-
-    def _enqueue_input(
-        self,
-        kind: RunInputKind,
-        text: str,
-    ) -> RunInputReceipt:
-        if self._status not in (RunStatus.CREATED, RunStatus.RUNNING):
-            raise RunInputClosedError(
-                f"AgentRun is {self._status.value} and no longer accepts queued input"
-            )
-        return self._control.enqueue(kind, text)
+    max_tokens_escalated: bool = False
+    attempts: int = 0
 
 
 class AgentLoop:
@@ -357,7 +139,7 @@ class AgentLoop:
             except Exception:
                 log.debug("Unable to emit run failure events", exc_info=True)
 
-        result = self._finalize_result(result, control)
+        result = finalize_run_result(result, control)
         await emit(RunFinished(run_id=run_id, result=result))
         return result
 
@@ -368,6 +150,67 @@ class AgentLoop:
         cancellation: RunCancellation,
         control: RunControl,
     ) -> RunResult:
+        conversation, turn_preparer = await self._initialize_session(request, emit)
+        recovery = _OutputRecoveryState()
+        await self._deliver_inputs(conversation, control.before_first_turn(), emit)
+
+        while True:
+            cancellation.raise_if_cancelled()
+            self._turn += 1
+            iteration = self._turn
+            response = await self._stream_turn(
+                conversation,
+                turn_preparer,
+                iteration,
+                emit,
+                cancellation,
+            )
+            thinking_blocks, completed = self._response_artifacts(response)
+
+            # A None result means RunControl selected another turn.
+            if completed.is_truncated:
+                result = await self._complete_truncated_response(
+                    conversation,
+                    response,
+                    thinking_blocks,
+                    completed,
+                    recovery,
+                    control,
+                    iteration,
+                    emit,
+                    cancellation,
+                )
+            else:
+                recovery.attempts = 0
+                if response.tool_calls:
+                    result = await self._complete_tool_response(
+                        conversation,
+                        response,
+                        thinking_blocks,
+                        completed,
+                        control,
+                        iteration,
+                        emit,
+                        cancellation,
+                    )
+                else:
+                    result = await self._complete_natural_response(
+                        conversation,
+                        response,
+                        thinking_blocks,
+                        control,
+                        iteration,
+                        emit,
+                    )
+
+            if result is not None:
+                return result
+
+    async def _initialize_session(
+        self,
+        request: RunRequest,
+        emit: EventSink,
+    ) -> tuple[ConversationManager, TurnPreparer]:
         agent = self._agent
         conversation = request.conversation
         agent._current_conversation = conversation
@@ -388,228 +231,310 @@ class AgentLoop:
 
         self._turn = 0
         self._last_text = ""
-        max_tokens_escalated = False
-        output_recoveries = 0
+        return conversation, turn_preparer
 
-        await self._deliver_inputs(
+    async def _stream_turn(
+        self,
+        conversation: ConversationManager,
+        turn_preparer: TurnPreparer,
+        iteration: int,
+        emit: EventSink,
+        cancellation: RunCancellation,
+    ) -> LLMResponse:
+        agent = self._agent
+        await emit(TurnStarted(turn=iteration))
+        await agent._run_hook("turn_start", emit)
+        prepared_call = await turn_preparer.prepare(
             conversation,
-            control.before_first_turn(),
+            iteration,
             emit,
+            cancellation,
         )
 
-        while True:
+        collector = StreamCollector()
+        await emit(MessageStarted(turn=iteration))
+        stream = agent.client.stream(
+            conversation,
+            system=prepared_call.system_prompt,
+            tools=list(prepared_call.tool_schemas),
+        )
+        async for event in collector.consume(stream):
             cancellation.raise_if_cancelled()
-            self._turn += 1
-            iteration = self._turn
+            await emit(event)
 
-            await emit(TurnStarted(turn=iteration))
-            await agent._run_hook("turn_start", emit)
-            prepared_call = await turn_preparer.prepare(
-                conversation,
-                iteration,
-                emit,
-                cancellation,
-            )
-            collector = StreamCollector()
-            await emit(MessageStarted(turn=iteration))
-            stream = agent.client.stream(
-                conversation,
-                system=prepared_call.system_prompt,
-                tools=list(prepared_call.tool_schemas),
-            )
-            async for event in collector.consume(stream):
-                cancellation.raise_if_cancelled()
-                await emit(event)
-            response = collector.response
-            await emit(
-                MessageFinished(
-                    turn=iteration,
-                    text=response.text,
-                    stop_reason=response.stop_reason,
-                )
-            )
-            if response.text:
-                self._last_text = response.text
-
-            await agent._run_hook("post_receive", emit, message=response.text)
-            agent.total_input_tokens += response.input_tokens
-            agent.total_output_tokens += response.output_tokens
-            await emit(
-                UsageEvent(
-                    input_tokens=agent.total_input_tokens,
-                    output_tokens=agent.total_output_tokens,
-                )
-            )
-
-            conv_thinking = [
-                ConvThinkingBlock(thinking=block.thinking, signature=block.signature)
-                for block in response.thinking_blocks
-            ]
-            completed = CompletedAssistantMessage(
+        response = collector.response
+        await emit(
+            MessageFinished(
+                turn=iteration,
                 text=response.text,
-                tool_calls=tuple(response.tool_calls),
                 stop_reason=response.stop_reason,
             )
+        )
+        if response.text:
+            self._last_text = response.text
+        await agent._run_hook("post_receive", emit, message=response.text)
+        agent.total_input_tokens += response.input_tokens
+        agent.total_output_tokens += response.output_tokens
+        await emit(
+            UsageEvent(
+                input_tokens=agent.total_input_tokens,
+                output_tokens=agent.total_output_tokens,
+            )
+        )
+        return response
 
-            if completed.is_truncated:
-                await self._record_truncated_response(
-                    conversation, response, conv_thinking, completed, emit, cancellation
-                )
-                retry_message: str | None = None
-                retry_event: RetryEvent | None = None
-                if not max_tokens_escalated:
-                    agent.client.set_max_output_tokens(MAX_TOKENS_CEILING)
-                    max_tokens_escalated = True
-                    retry_message = (
-                        "Output token limit hit. Resume directly from where you stopped. "
-                        "Do not apologize or repeat previous content. Pick up mid-thought if needed."
-                    )
-                    retry_event = RetryEvent(reason="max_tokens escalation")
-                elif output_recoveries < MAX_OUTPUT_TOKENS_RECOVERIES:
-                    output_recoveries += 1
-                    retry_message = (
-                        "Output token limit hit. Resume directly from where you stopped. "
-                        "Break remaining work into smaller pieces."
-                    )
-                    retry_event = RetryEvent(
-                        reason=(
-                            "max_tokens recovery "
-                            f"{output_recoveries}/{MAX_OUTPUT_TOKENS_RECOVERIES}"
-                        )
-                    )
+    @staticmethod
+    def _response_artifacts(
+        response: LLMResponse,
+    ) -> tuple[list[ConvThinkingBlock], CompletedAssistantMessage]:
+        thinking_blocks = [
+            ConvThinkingBlock(thinking=block.thinking, signature=block.signature)
+            for block in response.thinking_blocks
+        ]
+        completed = CompletedAssistantMessage(
+            text=response.text,
+            tool_calls=tuple(response.tool_calls),
+            stop_reason=response.stop_reason,
+        )
+        return thinking_blocks, completed
 
-                await agent._run_hook("turn_end", emit)
-                if retry_message is not None and retry_event is not None:
-                    directive = control.after_turn(
-                        would_stop=False,
-                        continuation_allowed=self._continuation_allowed(iteration),
-                        continue_reason="retry",
-                    )
-                    await emit(
-                        TurnComplete(
-                            turn=iteration,
-                            will_continue=directive.continue_run,
-                            reason=directive.reason,
-                        )
-                    )
-                    if not directive.continue_run:
-                        return await self._max_turn_result(iteration, emit)
-                    conversation.add_user_message(retry_message)
-                    await emit(retry_event)
-                    await self._deliver_inputs(
-                        conversation,
-                        directive.deliveries,
-                        emit,
-                    )
-                    continue
+    async def _complete_truncated_response(
+        self,
+        conversation: ConversationManager,
+        response: LLMResponse,
+        thinking_blocks: list[ConvThinkingBlock],
+        completed: CompletedAssistantMessage,
+        recovery: _OutputRecoveryState,
+        control: RunControl,
+        iteration: int,
+        emit: EventSink,
+        cancellation: RunCancellation,
+    ) -> RunResult | None:
+        await self._record_truncated_response(
+            conversation,
+            response,
+            thinking_blocks,
+            completed,
+            emit,
+            cancellation,
+        )
+        retry = self._next_output_retry(recovery)
+        await self._agent._run_hook("turn_end", emit)
+        if retry is None:
+            return await self._output_recovery_failed(control, iteration, emit)
 
-                message = "Output token limit recovery exhausted"
-                control.after_turn(would_stop=False, hard_stop="failed")
-                await emit(
-                    TurnComplete(
-                        turn=iteration,
-                        will_continue=False,
-                        reason="failed",
-                    )
-                )
-                await emit(ErrorEvent(message=message))
-                await emit(LoopComplete(total_turns=iteration))
-                return RunResult(
-                    status="failed",
-                    turns=iteration,
-                    final_text=self._last_text,
-                    error=message,
-                )
+        retry_message, retry_event = retry
+        directive = control.after_turn(
+            would_stop=False,
+            continuation_allowed=self._continuation_allowed(iteration),
+            continue_reason="retry",
+        )
+        await emit(
+            TurnComplete(
+                turn=iteration,
+                will_continue=directive.continue_run,
+                reason=directive.reason,
+            )
+        )
+        if not directive.continue_run:
+            return await self._max_turn_result(iteration, emit)
+        conversation.add_user_message(retry_message)
+        await emit(retry_event)
+        await self._deliver_inputs(conversation, directive.deliveries, emit)
+        return None
 
-            output_recoveries = 0
-            if not response.tool_calls:
-                conversation.add_assistant_message(
-                    response.text, thinking_blocks=conv_thinking
-                )
-                self._record_usage_anchor(conversation, response)
-                await self._finish_natural_turn(conversation, response.text, emit)
-                directive = await self._finish_turn(
-                    control,
-                    conversation,
-                    emit,
-                    iteration,
-                    would_stop=True,
-                )
-                if directive.continue_run:
-                    continue
-                if directive.reason == "max_turns":
-                    return await self._max_turn_result(iteration, emit)
-                await emit(LoopComplete(total_turns=iteration))
-                return RunResult(
-                    status="completed",
-                    turns=iteration,
-                    final_text=self._last_text,
-                )
+    def _next_output_retry(
+        self,
+        recovery: _OutputRecoveryState,
+    ) -> tuple[str, RetryEvent] | None:
+        if not recovery.max_tokens_escalated:
+            self._agent.client.set_max_output_tokens(MAX_TOKENS_CEILING)
+            recovery.max_tokens_escalated = True
+            return (
+                "Output token limit hit. Resume directly from where you stopped. "
+                "Do not apologize or repeat previous content. "
+                "Pick up mid-thought if needed.",
+                RetryEvent(reason="max_tokens escalation"),
+            )
+        if recovery.attempts >= MAX_OUTPUT_TOKENS_RECOVERIES:
+            return None
 
-            tool_uses = [
+        recovery.attempts += 1
+        return (
+            "Output token limit hit. Resume directly from where you stopped. "
+            "Break remaining work into smaller pieces.",
+            RetryEvent(
+                reason=(
+                    "max_tokens recovery "
+                    f"{recovery.attempts}/{MAX_OUTPUT_TOKENS_RECOVERIES}"
+                )
+            ),
+        )
+
+    async def _output_recovery_failed(
+        self,
+        control: RunControl,
+        iteration: int,
+        emit: EventSink,
+    ) -> RunResult:
+        message = "Output token limit recovery exhausted"
+        control.after_turn(would_stop=False, hard_stop="failed")
+        await emit(
+            TurnComplete(
+                turn=iteration,
+                will_continue=False,
+                reason="failed",
+            )
+        )
+        await emit(ErrorEvent(message=message))
+        await emit(LoopComplete(total_turns=iteration))
+        return RunResult(
+            status="failed",
+            turns=iteration,
+            final_text=self._last_text,
+            error=message,
+        )
+
+    async def _complete_natural_response(
+        self,
+        conversation: ConversationManager,
+        response: LLMResponse,
+        thinking_blocks: list[ConvThinkingBlock],
+        control: RunControl,
+        iteration: int,
+        emit: EventSink,
+    ) -> RunResult | None:
+        conversation.add_assistant_message(
+            response.text,
+            thinking_blocks=thinking_blocks,
+        )
+        self._record_usage_anchor(conversation, response)
+        await self._finish_natural_turn(conversation, response.text, emit)
+        directive = await self._finish_turn(
+            control,
+            conversation,
+            emit,
+            iteration,
+            would_stop=True,
+        )
+        return await self._resolve_turn_directive(directive, iteration, emit)
+
+    async def _complete_tool_response(
+        self,
+        conversation: ConversationManager,
+        response: LLMResponse,
+        thinking_blocks: list[ConvThinkingBlock],
+        completed: CompletedAssistantMessage,
+        control: RunControl,
+        iteration: int,
+        emit: EventSink,
+        cancellation: RunCancellation,
+    ) -> RunResult | None:
+        conversation.add_assistant_message(
+            response.text,
+            [
                 ToolUseBlock(
                     tool_use_id=call.tool_id,
                     tool_name=call.tool_name,
                     arguments=call.arguments,
                 )
                 for call in response.tool_calls
-            ]
-            conversation.add_assistant_message(
-                response.text,
-                tool_uses,
-                thinking_blocks=conv_thinking,
-            )
-            self._record_usage_anchor(conversation, response)
-            batch_request = ToolBatchRequest(
-                assistant_message=completed,
-                session_dir=agent.session_dir,
-            )
-            try:
-                batch = await self._pipeline.execute_batch(
-                    batch_request, emit, cancellation
-                )
-            except asyncio.CancelledError:
+            ],
+            thinking_blocks=thinking_blocks,
+        )
+        self._record_usage_anchor(conversation, response)
+        batch = await self._execute_tool_batch(
+            conversation,
+            completed,
+            emit,
+            cancellation,
+        )
+        self._consume_ready_memory_recall(conversation)
 
-                async def discard(_event: AgentEvent) -> None:
-                    return None
+        await self._agent._run_hook("turn_end", emit)
+        directive = await self._finish_turn(
+            control,
+            conversation,
+            emit,
+            iteration,
+            would_stop=False,
+            hard_stop="terminate" if batch.terminate else None,
+        )
+        return await self._resolve_turn_directive(directive, iteration, emit)
 
-                batch = await self._pipeline.cancelled_batch(batch_request, discard)
-                conversation.add_tool_results_message(list(batch.messages))
-                raise
-            conversation.add_tool_results_message(list(batch.messages))
-
-            if (
-                agent.memory_recall_task
-                and not agent._memory_recall_consumed
-                and agent.memory_recall_task.done()
-            ):
-                try:
-                    recall = agent.memory_recall_task.result()
-                    if recall:
-                        conversation.add_system_reminder(recall)
-                except Exception:
-                    log.debug("Memory recall task failed", exc_info=True)
-                agent._memory_recall_consumed = True
-
-            await agent._run_hook("turn_end", emit)
-            directive = await self._finish_turn(
-                control,
-                conversation,
+    async def _execute_tool_batch(
+        self,
+        conversation: ConversationManager,
+        completed: CompletedAssistantMessage,
+        emit: EventSink,
+        cancellation: RunCancellation,
+    ) -> ToolBatchResult:
+        batch_request = ToolBatchRequest(
+            assistant_message=completed,
+            session_dir=self._agent.session_dir,
+        )
+        try:
+            batch = await self._pipeline.execute_batch(
+                batch_request,
                 emit,
-                iteration,
-                would_stop=False,
-                hard_stop="terminate" if batch.terminate else None,
+                cancellation,
             )
-            if directive.continue_run:
-                continue
-            if directive.reason == "max_turns":
-                return await self._max_turn_result(iteration, emit)
-            await emit(LoopComplete(total_turns=iteration))
-            return RunResult(
-                status="completed",
-                turns=iteration,
-                final_text=self._last_text,
+        except asyncio.CancelledError:
+            batch = await self._pipeline.cancelled_batch(
+                batch_request,
+                self._discard_event,
             )
+            conversation.add_tool_results_message(list(batch.messages))
+            raise
+        conversation.add_tool_results_message(list(batch.messages))
+        return batch
+
+    def _consume_ready_memory_recall(
+        self,
+        conversation: ConversationManager,
+    ) -> None:
+        agent = self._agent
+        if not (
+            agent.memory_recall_task
+            and not agent._memory_recall_consumed
+            and agent.memory_recall_task.done()
+        ):
+            return
+        try:
+            recall = agent.memory_recall_task.result()
+            if recall:
+                conversation.add_system_reminder(recall)
+        except Exception:
+            log.debug("Memory recall task failed", exc_info=True)
+        agent._memory_recall_consumed = True
+
+    async def _resolve_turn_directive(
+        self,
+        directive: TurnDirective,
+        iteration: int,
+        emit: EventSink,
+    ) -> RunResult | None:
+        if directive.continue_run:
+            return None
+        if directive.reason == "max_turns":
+            return await self._max_turn_result(iteration, emit)
+        return await self._completed_result(iteration, emit)
+
+    async def _completed_result(
+        self,
+        iteration: int,
+        emit: EventSink,
+    ) -> RunResult:
+        await emit(LoopComplete(total_turns=iteration))
+        return RunResult(
+            status="completed",
+            turns=iteration,
+            final_text=self._last_text,
+        )
+
+    @staticmethod
+    async def _discard_event(_event: AgentEvent) -> None:
+        return None
 
     async def _finish_turn(
         self,
@@ -676,18 +601,6 @@ class AgentLoop:
                 kind=kind,
                 input_ids=tuple(item.input_id for item in deliveries),
             )
-        )
-
-    @staticmethod
-    def _finalize_result(result: RunResult, control: RunControl) -> RunResult:
-        if control.state is RunControlState.OPEN:
-            control.seal(_result_reason(result))
-        undelivered = control.recover_undelivered()
-        if not undelivered:
-            return result
-        return replace(
-            result,
-            undelivered_inputs=(*result.undelivered_inputs, *undelivered),
         )
 
     async def _record_truncated_response(
@@ -758,49 +671,3 @@ class AgentLoop:
             response.cache_read,
             response.cache_creation,
         )
-
-
-@dataclass
-class _EventEnvelope:
-    event: AgentEvent
-    acknowledged: asyncio.Future[None]
-
-
-class StreamingEventAdapter:
-    """Turns the async EventSink contract into the legacy async iterator API."""
-
-    def __init__(self) -> None:
-        self._queue: asyncio.Queue[_EventEnvelope] = asyncio.Queue()
-
-    async def emit(self, event: AgentEvent) -> None:
-        acknowledged = asyncio.get_running_loop().create_future()
-        await self._queue.put(_EventEnvelope(event, acknowledged))
-        await acknowledged
-
-    async def events(self, run: AgentRun) -> AsyncIterator[AgentEvent]:
-        current: _EventEnvelope | None = None
-        try:
-            while True:
-                current = await self._queue.get()
-                yield current.event
-                if not current.acknowledged.done():
-                    current.acknowledged.set_result(None)
-                if isinstance(current.event, RunFinished):
-                    break
-                current = None
-            await run.wait_until_idle()
-        finally:
-            if current is not None and not current.acknowledged.done():
-                current.acknowledged.set_result(None)
-            if run.status != RunStatus.IDLE:
-                run.cancel()
-                while run.status != RunStatus.IDLE:
-                    try:
-                        envelope = await asyncio.wait_for(
-                            self._queue.get(), timeout=0.05
-                        )
-                    except TimeoutError:
-                        continue
-                    if not envelope.acknowledged.done():
-                        envelope.acknowledged.set_result(None)
-                await run.wait_until_idle()

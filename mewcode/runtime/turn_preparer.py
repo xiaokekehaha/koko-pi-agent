@@ -40,57 +40,97 @@ class TurnPreparer:
         emit: EventSink,
         cancellation: _CancellationToken,
     ) -> PreparedModelCall:
-        agent = self._agent
+        await self._consume_runtime_inputs(conversation, emit)
+        system_prompt = self._build_system_prompt()
+        self._add_mode_reminders(conversation, turn)
+        self._add_hook_notifications(conversation)
+        self._add_deferred_tool_reminder(conversation)
 
+        tool_schemas = self._agent.registry.get_all_schemas(self._agent.protocol)
+        await self._compact_conversation(conversation, tool_schemas, emit)
+        cancellation.raise_if_cancelled()
+
+        # Project schemas again at the final model-call boundary.
+        return PreparedModelCall(
+            system_prompt=system_prompt,
+            tool_schemas=tuple(
+                self._agent.registry.get_all_schemas(self._agent.protocol)
+            ),
+        )
+
+    async def _consume_runtime_inputs(
+        self,
+        conversation: ConversationManager,
+        emit: EventSink,
+    ) -> None:
+        agent = self._agent
         agent._consume_mailbox(conversation)
         if agent.notification_fn:
             for note in agent.notification_fn():
                 conversation.add_system_reminder(note)
         await agent._run_hook("pre_send", emit)
 
-        hook_prompts = (
-            agent.hook_engine.get_prompt_messages() if agent.hook_engine else None
-        )
-        system_prompt = build_system_prompt(hook_prompts=hook_prompts)
+    def _build_system_prompt(self) -> str:
+        hook_engine = self._agent.hook_engine
+        hook_prompts = hook_engine.get_prompt_messages() if hook_engine else None
+        return build_system_prompt(hook_prompts=hook_prompts)
 
+    def _add_mode_reminders(
+        self,
+        conversation: ConversationManager,
+        turn: int,
+    ) -> None:
+        agent = self._agent
         if agent.plan_mode:
-            plan_path = str(agent._get_plan_path())
+            plan_path = agent._get_plan_path()
             if agent.permission_checker:
-                agent.permission_checker.plan_file_path = plan_path
+                agent.permission_checker.plan_file_path = str(plan_path)
             conversation.add_system_reminder(
-                build_plan_mode_reminder(
-                    plan_path,
-                    agent._get_plan_path().exists(),
-                    turn,
-                )
+                build_plan_mode_reminder(str(plan_path), plan_path.exists(), turn)
             )
 
-        if agent.coordinator_mode:
-            from mewcode.teams.coordinator import get_coordinator_reminder
+        if not agent.coordinator_mode:
+            return
+        from mewcode.teams.coordinator import get_coordinator_reminder
 
+        conversation.add_system_reminder(
+            get_coordinator_reminder(
+                turn,
+                agent_catalog=agent._agent_catalog_list or None,
+            )
+        )
+
+    def _add_hook_notifications(self, conversation: ConversationManager) -> None:
+        hook_engine = self._agent.hook_engine
+        if not hook_engine:
+            return
+        for note in hook_engine.drain_notifications():
             conversation.add_system_reminder(
-                get_coordinator_reminder(
-                    turn,
-                    agent_catalog=agent._agent_catalog_list or None,
-                )
+                f"Hook [{note.hook_id}] {note.event}: {note.output}"
             )
 
-        if agent.hook_engine:
-            for note in agent.hook_engine.drain_notifications():
-                conversation.add_system_reminder(
-                    f"Hook [{note.hook_id}] {note.event}: {note.output}"
-                )
+    def _add_deferred_tool_reminder(
+        self,
+        conversation: ConversationManager,
+    ) -> None:
+        deferred_names = self._agent.registry.get_deferred_tool_names()
+        if not deferred_names:
+            return
+        conversation.add_system_reminder(
+            "The following deferred tools are available via ToolSearch. "
+            "Their schemas are NOT loaded - use ToolSearch with "
+            'query "select:<name>[,<name>...]" to load tool schemas before '
+            "calling them:\n"
+            + "\n".join(deferred_names)
+        )
 
-        deferred_names = agent.registry.get_deferred_tool_names()
-        if deferred_names:
-            conversation.add_system_reminder(
-                "The following deferred tools are available via ToolSearch. "
-                "Their schemas are NOT loaded - use ToolSearch with "
-                'query "select:<name>[,<name>...]" to load tool schemas before calling them:\n'
-                + "\n".join(deferred_names)
-            )
-
-        tool_schemas = agent.registry.get_all_schemas(agent.protocol)
+    async def _compact_conversation(
+        self,
+        conversation: ConversationManager,
+        tool_schemas: list[dict[str, Any]],
+        emit: EventSink,
+    ) -> None:
+        agent = self._agent
         compact_result = await auto_compact(
             conversation,
             agent.client,
@@ -114,18 +154,10 @@ class TurnPreparer:
                 )
             )
             conversation.inject_environment(self._environment_context)
-            memory_content = (
-                agent.memory_manager.load() if agent.memory_manager else ""
-            )
+            memory_content = agent.memory_manager.load() if agent.memory_manager else ""
             conversation.inject_long_term_memory(
                 agent.instructions_content,
                 memory_content,
             )
         elif isinstance(compact_result, str):
             await emit(ErrorEvent(message=compact_result))
-
-        cancellation.raise_if_cancelled()
-        return PreparedModelCall(
-            system_prompt=system_prompt,
-            tool_schemas=tuple(agent.registry.get_all_schemas(agent.protocol)),
-        )

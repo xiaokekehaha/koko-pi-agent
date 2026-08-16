@@ -25,13 +25,11 @@ from mewcode.hooks import HookContext, HookEngine
 from mewcode.memory.auto_memory import MemoryManager
 from mewcode.permissions import PermissionChecker, PermissionMode
 from mewcode.prompts import build_environment_context
-from mewcode.runtime.agent_loop import (
-    AgentLoop,
+from mewcode.runtime.agent_loop import AgentLoop
+from mewcode.runtime.agent_run import (
     AgentRun,
     RunRequest,
     RunStatus,
-    StreamCollector,
-    StreamingEventAdapter,
 )
 from mewcode.runtime.events import (
     AgentEvent,
@@ -60,6 +58,8 @@ from mewcode.runtime.events import (
     UsageEvent,
     UsageUpdated,
 )
+from mewcode.runtime.model_stream import StreamCollector
+from mewcode.runtime.streaming_adapter import StreamingEventAdapter
 from mewcode.runtime.tool_pipeline import (
     ApprovalAdapter,
     HeadlessApprovalAdapter,
