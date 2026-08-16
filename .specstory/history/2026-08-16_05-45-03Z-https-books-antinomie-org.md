@@ -19845,3 +19845,248 @@ Stage 2B `TurnPreparer` 已开发完成，没有改变 RunControl、ToolPipeline
 - 当前受限环境没有 Ruff，因此没有声称 Ruff 通过
 
 现有脏工作树和用户材料均已保留，没有 commit 或 push。下一阶段候选是 2C `ResourceScope + TaskSupervisor`。
+
+---
+
+_**User (2026-08-16 10:37:37Z)**_
+
+创建一个新分支，继续迭代
+
+
+---
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:37:44Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Deciding new branch name and creation method**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:37:44Z)**_
+
+我会先确认当前分支和工作树，再创建一个 `codex/` 前缀的新迭代分支。现有未提交的 Stage 1/2A/2B 修改会原样随工作树带到新分支，不会自动形成提交。
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:37:45Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({
+  cmd: "git branch --show-current; git status --short; git branch --list 'codex/mewcode-runtime-stage-2c'",
+  workdir: "/Users/xiaokezhou/workspace/mewcode-python"
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:37:49Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({
+  cmd: "git switch -c codex/mewcode-runtime-stage-2c; git branch --show-current; git rev-parse --short HEAD; git status --short",
+  workdir: "/Users/xiaokezhou/wor
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:37:52Z)**_
+
+已创建并切换到新分支：
+
+`codex/mewcode-runtime-stage-2c`
+
+当前 HEAD：`b893d73`
+
+两个已有 `.specstory` 未提交修改已随工作树保留。未执行 commit 或 push，可以继续 Stage 2C 迭代。
+
+---
+
+_**User (2026-08-16 10:38:35Z)**_
+
+代码里面也有Turn 的概念吗
+
+
+---
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:38:38Z)**_
+
+我会对照当前分支里的类型定义和 `agent_loop` 调用链确认，不只按之前的设计文档回答；重点区分“显式的 `Turn` 对象”和“循环中的一轮语义”。
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:38:39Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const m = await tools.exec_command({
+  cmd: "rg -n \"mewcode-python|TurnPreparer|agent_loop|Stage 2B|Turn\" /Users/xiaokezhou/.codex/memories/MEMORY.md | head -80",
+  workdir: "/Users/xiaokezhou/works
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:38:43Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({
+  cmd: "rg -n --glob '*.py' \"class Turn|\\bTurn\\b|turn_id|turn_index|turn_number|current_turn|TurnStarted|TurnEnded|turn_start|turn_end|PreparedModelCall|TurnPre
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:38:49Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const out = await Promise.all([
+  tools.exec_command({
+    cmd: "nl -ba mewcode/runtime/events.py | sed -n '1,135p'",
+    workdir: "/Users/xiaokezhou/workspace/mewcode-python",
+    yield_time_ms: 1000
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:38:54Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({
+  cmd: "nl -ba mewcode/runtime/agent_loop.py | sed -n '520,765p'; nl -ba mewcode/runtime/run_control.py | sed -n '99,170p'",
+  workdir: "/Users/xiaokezhou/workspac
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:39:02Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Clarifying Turn and Run distinctions with code links**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 10:39:14Z)**_
+
+有。当前代码已经明确引入了 **Turn（轮次）**，但它目前主要表现为“运行流程边界”，还不是一个完整的 `Turn` 领域对象。
+
+一个 Turn 的实际范围是：
+
+```text
+TurnStarted
+  → TurnPreparer.prepare()
+  → 调用模型并流式接收响应
+  → 如果模型请求工具，则执行这一批工具
+  → turn_end hook
+  → TurnComplete
+  → 判断是否进入下一轮
+```
+
+核心入口在 [agent_loop.py](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py:400)：
+
+- `_turn += 1`：轮次编号递增
+- `TurnStarted(turn=iteration)`：轮次开始
+- `TurnPreparer.prepare(...)`：准备本轮上下文、提示词和工具
+- `client.stream(...)`：本轮模型调用
+- 如果有工具调用，执行完整的工具批次
+- `_finish_turn(...)`：生成本轮结束决策
+- `TurnComplete(...)`：轮次结束
+
+所以当前定义可以概括为：
+
+> 一个 Turn = 一次模型响应 + 这次响应产生的一批工具执行。
+
+它不等于一次完整用户请求。一次用户请求对应一个 `Run`，一个 `Run` 可以包含多个 Turn：
+
+```text
+Run
+├── Turn 1：模型调用 → 工具调用
+├── Turn 2：读取工具结果 → 再调用工具
+└── Turn 3：模型输出最终答案 → Run 结束
+```
+
+代码中与 Turn 有关的显式概念包括：
+
+- `TurnStarted`、`TurnComplete`：轮次生命周期事件，见 [events.py](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/events.py:45)
+- `TurnDirective`：决定完成当前轮后是否继续，以及为什么继续，见 [run_control.py](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/run_control.py:47)
+- `TurnPreparer`：负责每次模型调用前的准备工作，见 [turn_preparer.py](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/turn_preparer.py:29)
+- `turn_start` / `turn_end`：插件 Hook 的轮次边界
+- `max_iterations`：限制一个 Run 最多包含多少个 Turn
+
+需要注意：目前并没有这样的实体：
+
+```python
+class Turn:
+    id: ...
+    number: ...
+    status: ...
+    reason: ...
+    model_response: ...
+    tool_batch: ...
+    resources: ...
+```
+
+现在只通过：
+
+- `iteration: int`
+- 一组 Turn 事件
+- `TurnDirective`
+- `_turn` 状态
+
+共同表达 Turn。
+
+这意味着：**Turn 的语义已经成立，但它还是隐式聚合，并没有被建模成独立对象。** `TurnPreparer` 也不是 Turn 本身，它只是 Turn 开始阶段的准备器。
+
+这个现状对下一阶段很重要：Stage 2C 做 `ResourceScope + TaskSupervisor` 时，可以先让资源归属于“当前轮次边界”，但暂时不一定要创建重量级 `Turn` 类。等到需要轮次级取消、资源回收、诊断追踪或重放时，再抽取 `TurnContext` 会更自然。
+
+
+
+---
+
+_**User (2026-08-16 13:56:30Z)**_
+
+[$simplify](/Users/xiaokezhou/.codex/skills/simplify/SKILL.md) [runtime](mewcode/runtime/)  下面的改造，另外修改的代码记得做好备注，代码能拆开的需要拆开。不要一个代码里面很长
+
+
+_**User (2026-08-16 13:56:49Z)**_
+
+[$simplify](/Users/xiaokezhou/.codex/skills/simplify/SKILL.md) [runtime](mewcode/runtime/)  看下最近下面的修改，另外修改的代码记得做好备注，代码能拆开的需要拆开。不要一个代码里面很长
+
+---
+
+_**Agent (gpt-5.6-sol 2026-08-16 13:56:56Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning code simplification and annotation**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 13:56:58Z)**_
+
+我会按 `simplify` 技能处理：先锁定 `mewcode/runtime/` 最近改动的行为和对比基线，跑相关测试；再优先拆分过长函数、合并重复分支，并用简短注释说明不直观的边界决策。不会改变公开接口或错误语义。
+
+_**Agent (gpt-5.6-sol 2026-08-16 13:57:00Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const skill = await tools.exec_command({
+  cmd: "cat /Users/xiaokezhou/.codex/skills/simplify/SKILL.md",
+  workdir: "/Users/xiaokezhou/workspace/mewcode-python",
+  yield_time_ms: 10000,
+  max_output_t
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 13:57:04Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const m = await tools.exec_command({
+  cmd: "rg -n \"TurnPreparer|Stage 2B|runtime-stage|agent_loop|run_control|mewcode/runtime\" /Users/xiaokezhou/.codex/memories/MEMORY.md | head -120",
+  workdir: "
+...
+```
+</details></tool-use>
