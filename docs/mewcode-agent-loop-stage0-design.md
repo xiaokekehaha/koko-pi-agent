@@ -4,7 +4,7 @@
 > - 日期：2026-08-16
 > - 上位设计：[MewCode Runtime 迭代设计](./mewcode-pi-inspired-runtime-design.md)
 > - 参考阅读：[Pi Chapter 1](https://books.antinomie.org/pi/chapter/01)、[Pi Chapter 2](https://books.antinomie.org/pi/chapter/02)
-> - 当前边界：只设计和规划，不修改 `mewcode/` 生产源码
+> - 当前边界：只设计和规划，不修改 `koko_pi_agent/` 生产源码
 
 ## 1. 结论
 
@@ -26,8 +26,8 @@
 
 | 证据 | 当前路径 | 影响 |
 | --- | --- | --- |
-| 交互循环 | `mewcode/agent.py::Agent.run` | 同时管理环境、记忆、Hook、压缩、模型、Tool、权限、恢复和事件 |
-| 非交互循环 | `mewcode/agent.py::Agent.run_to_completion` | 重复实现模型 → Tool → 模型，但行为与交互路径不同 |
+| 交互循环 | `koko_pi_agent/agent.py::Agent.run` | 同时管理环境、记忆、Hook、压缩、模型、Tool、权限、恢复和事件 |
+| 非交互循环 | `koko_pi_agent/agent.py::Agent.run_to_completion` | 重复实现模型 → Tool → 模型，但行为与交互路径不同 |
 | 交互 Tool 执行 | `_execute_single_tool_direct`、`_execute_tool` | 没有统一经过 `pre_tool_use/post_tool_use` Hook |
 | 非交互 Tool 执行 | `_execute_tool_noninteractive` | 单独实现 Hook、权限、校验和执行 |
 | Tool 并发声明 | `partition_tool_calls`、`is_concurrency_safe` | 有测试，但生产 `run()` 没有使用该分组结果 |
@@ -400,7 +400,7 @@ Interface 约束：
 ### 9.3 兼容策略
 
 - `StreamText`、`ToolUseEvent`、`ToolResultEvent`、`TurnComplete`、`LoopComplete` 等旧事件在迁移期通过 `LegacyEventAdapter` 映射；
-- `mewcode.agent` 暂时 re-export 旧导入路径；
+- `koko_pi_agent.agent` 暂时 re-export 旧导入路径；
 - TUI 和 Remote 可逐个迁移到新事件，不要求一次改完展示代码；
 - 不同时发送语义重复的新旧事件，避免 UI 重复渲染。
 
@@ -446,7 +446,7 @@ TUI 与 Remote 保留各自展示代码，因为 Textual Widget 和 WebSocket �
 ## 12. 建议目录
 
 ```text
-mewcode/
+koko_pi_agent/
 ├── runtime/
 │   ├── __init__.py          # 稳定导出面
 │   ├── events.py            # AgentEvent 与 RunResult Interface
@@ -487,7 +487,7 @@ mewcode/
 
 计划：
 
-- 新建 `mewcode/runtime/events.py` 和 `tool_pipeline.py`；
+- 新建 `koko_pi_agent/runtime/events.py` 和 `tool_pipeline.py`；
 - 把三条 Tool 执行路径合并到 `execute_batch()`；
 - 移除 streaming 期间的无条件 Tool 抢跑；
 - 正式使用 `is_concurrency_safe`；
@@ -504,7 +504,7 @@ mewcode/
 
 计划：
 
-- 新建 `mewcode/runtime/agent_loop.py`；
+- 新建 `koko_pi_agent/runtime/agent_loop.py`；
 - 从 `Agent.run()` 移出唯一 while Loop；
 - 保留当前压缩、重试、usage 和消息追加行为；
 - `run_to_completion()` 改为 Headless Adapter；
@@ -538,7 +538,7 @@ mewcode/
 5. in-process teammate；
 6. TUI；
 7. Remote；
-8. `mewcode/__main__.py` 非交互入口。
+8. `koko_pi_agent/__main__.py` 非交互入口。
 
 每迁移一个调用方，都比较 Conversation、Tool 结果、usage、取消和最终文本，不以“能运行”作为唯一验收。
 
@@ -555,19 +555,19 @@ mewcode/
 
 | 文件 | 计划变化 |
 | --- | --- |
-| `mewcode/runtime/__init__.py` | 新增稳定导出面 |
-| `mewcode/runtime/events.py` | 新增 Run/Turn/Message/Tool 事件与结果类型 |
-| `mewcode/runtime/agent_loop.py` | 新增唯一 AgentLoop 与 AgentRun |
-| `mewcode/runtime/tool_pipeline.py` | 新增 ToolPipeline |
-| `mewcode/agent.py` | 逐步变为兼容 facade，删除重复 Loop 与 Tool 路径 |
-| `mewcode/tools/base.py` | ToolResult 增加兼容的 terminate 字段 |
-| `mewcode/hooks/engine.py` | 通过 ToolPipeline Adapter 统一调用，不立即更改 YAML |
-| `mewcode/app.py` | 接入 Streaming/UI Adapter 和统一 cancel |
-| `mewcode/remote.py` | 接入 Streaming/Remote Adapter 和统一 cancel |
-| `mewcode/agents/task_manager.py` | 接入 Headless Adapter |
-| `mewcode/tools/agent_tool.py` | 接入 Headless Adapter |
-| `mewcode/skills/executor.py` | 接入 Streaming Adapter |
-| `mewcode/teams/spawn_inprocess.py` | 接入 Headless Adapter |
+| `koko_pi_agent/runtime/__init__.py` | 新增稳定导出面 |
+| `koko_pi_agent/runtime/events.py` | 新增 Run/Turn/Message/Tool 事件与结果类型 |
+| `koko_pi_agent/runtime/agent_loop.py` | 新增唯一 AgentLoop 与 AgentRun |
+| `koko_pi_agent/runtime/tool_pipeline.py` | 新增 ToolPipeline |
+| `koko_pi_agent/agent.py` | 逐步变为兼容 facade，删除重复 Loop 与 Tool 路径 |
+| `koko_pi_agent/tools/base.py` | ToolResult 增加兼容的 terminate 字段 |
+| `koko_pi_agent/hooks/engine.py` | 通过 ToolPipeline Adapter 统一调用，不立即更改 YAML |
+| `koko_pi_agent/app.py` | 接入 Streaming/UI Adapter 和统一 cancel |
+| `koko_pi_agent/remote.py` | 接入 Streaming/Remote Adapter 和统一 cancel |
+| `koko_pi_agent/agents/task_manager.py` | 接入 Headless Adapter |
+| `koko_pi_agent/tools/agent_tool.py` | 接入 Headless Adapter |
+| `koko_pi_agent/skills/executor.py` | 接入 Streaming Adapter |
+| `koko_pi_agent/teams/spawn_inprocess.py` | 接入 Headless Adapter |
 | `tests/test_agent_runtime.py` | 新增 AgentLoop / AgentRun Interface 测试 |
 | `tests/test_tool_pipeline.py` | 新增 ToolPipeline Interface 测试 |
 
@@ -666,10 +666,10 @@ mewcode/
 
 ## 21. 实施结果（2026-08-16）
 
-- `mewcode/runtime/events.py`：类型化 Run、Turn、Message、Tool 与兼容事件。
-- `mewcode/runtime/tool_pipeline.py`：唯一 prepare → execute → finalize 路径。
-- `mewcode/runtime/agent_loop.py`：唯一模型循环、AgentRun、取消、settlement 与 Streaming Adapter。
-- `mewcode/agent.py`：从 1300 行以上降为兼容 facade 和 Agent 配置状态，不再包含 Tool 执行或第二份 while Loop。
+- `koko_pi_agent/runtime/events.py`：类型化 Run、Turn、Message、Tool 与兼容事件。
+- `koko_pi_agent/runtime/tool_pipeline.py`：唯一 prepare → execute → finalize 路径。
+- `koko_pi_agent/runtime/agent_loop.py`：唯一模型循环、AgentRun、取消、settlement 与 Streaming Adapter。
+- `koko_pi_agent/agent.py`：从 1300 行以上降为兼容 facade 和 Agent 配置状态，不再包含 Tool 执行或第二份 while Loop。
 - `tests/test_tool_pipeline.py`：覆盖截断零副作用、配对、并发屏障、完成顺序、写回顺序和 terminate。
 - `tests/test_agent_runtime.py`：覆盖 streaming / Remote sink / headless 一致性、Hook / Permission 一致性、active-run 保护、取消收束和 RunFinished → idle 顺序。
 

@@ -55,12 +55,12 @@ flowchart LR
 
 | 入口 | 当前装配位置 | 特征 |
 | --- | --- | --- |
-| TUI lead | `mewcode/app.py::_select_provider()` | Tool 分多段注册，并依赖 Session、Skill、Worktree、Team 和 UI |
-| headless prompt | `mewcode/__main__.py::_run_prompt()` | 先建 Agent，再补 Team Tool；函数存在多个早退分支 |
-| Remote lead | `mewcode/remote.py::_init_agent()` | 注释明确写着“复刻 TUI 流程”，但实际 Tool 清单已经不同 |
-| 外部 teammate | `mewcode/__main__.py::_build_teammate_registry()` | 单独维护协作 Tool、Skill、Worktree 和 MCP |
+| TUI lead | `koko_pi_agent/app.py::_select_provider()` | Tool 分多段注册，并依赖 Session、Skill、Worktree、Team 和 UI |
+| headless prompt | `koko_pi_agent/__main__.py::_run_prompt()` | 先建 Agent，再补 Team Tool；函数存在多个早退分支 |
+| Remote lead | `koko_pi_agent/remote.py::_init_agent()` | 注释明确写着“复刻 TUI 流程”，但实际 Tool 清单已经不同 |
+| 外部 teammate | `koko_pi_agent/__main__.py::_build_teammate_registry()` | 单独维护协作 Tool、Skill、Worktree 和 MCP |
 
-此外，`mewcode/agents/tool_filter.py` 会为 sub-agent、fork、coordinator 和 in-process teammate 新建过滤 Registry；其中多数 Tool 对象直接从父 Registry 借用。
+此外，`koko_pi_agent/agents/tool_filter.py` 会为 sub-agent、fork、coordinator 和 in-process teammate 新建过滤 Registry；其中多数 Tool 对象直接从父 Registry 借用。
 
 ### 3.2 当前 ToolRegistry 没有所有权语义
 
@@ -587,7 +587,7 @@ Stage 1 对 MCPManager 的最小修改计划：
 
 主要文件：
 
-- `mewcode/tools/__init__.py`；
+- `koko_pi_agent/tools/__init__.py`；
 - `tests/test_tool_registry.py`（新增）。
 
 具体步骤：
@@ -608,9 +608,9 @@ Stage 1 对 MCPManager 的最小修改计划：
 
 主要文件：
 
-- `mewcode/extensions/__init__.py`；
-- `mewcode/extensions/contracts.py`；
-- `mewcode/extensions/host.py`；
+- `koko_pi_agent/extensions/__init__.py`；
+- `koko_pi_agent/extensions/contracts.py`；
+- `koko_pi_agent/extensions/host.py`；
 - `tests/test_extensions.py`。
 
 具体步骤：
@@ -626,16 +626,16 @@ Stage 1 对 MCPManager 的最小修改计划：
 
 退出条件：成功、冲突、第二次注册失败、反向顺序、重复关闭和 stale API 全部通过。
 
-回滚：删除 `mewcode/extensions/`；生产入口尚未接线。
+回滚：删除 `koko_pi_agent/extensions/`；生产入口尚未接线。
 
 ### 1D：内置 manifest + prompt tracer bullet
 
 主要文件：
 
-- `mewcode/extensions/builtins.py`；
-- `mewcode/runtime/agent_runtime.py`；
-- `mewcode/runtime/__init__.py`；
-- `mewcode/__main__.py`；
+- `koko_pi_agent/extensions/builtins.py`；
+- `koko_pi_agent/runtime/agent_runtime.py`；
+- `koko_pi_agent/runtime/__init__.py`；
+- `koko_pi_agent/__main__.py`；
 - `tests/test_runtime_composition.py`。
 
 具体步骤：
@@ -657,8 +657,8 @@ Stage 1 对 MCPManager 的最小修改计划：
 
 主要文件：
 
-- `mewcode/app.py`；
-- `mewcode/remote.py`；
+- `koko_pi_agent/app.py`；
+- `koko_pi_agent/remote.py`；
 - 对应 UI/Remote 测试。
 
 具体步骤：
@@ -681,10 +681,10 @@ Stage 1 对 MCPManager 的最小修改计划：
 
 主要文件：
 
-- `mewcode/__main__.py` teammate 分支；
-- `mewcode/agents/tool_filter.py`；
-- `mewcode/mcp/manager.py`；
-- `mewcode/tools/__init__.py` 中旧默认工厂的去留；
+- `koko_pi_agent/__main__.py` teammate 分支；
+- `koko_pi_agent/agents/tool_filter.py`；
+- `koko_pi_agent/mcp/manager.py`；
+- `koko_pi_agent/tools/__init__.py` 中旧默认工厂的去留；
 - teammate/sub-agent/MCP 相关测试。
 
 具体步骤：
@@ -708,18 +708,18 @@ Stage 1 对 MCPManager 的最小修改计划：
 
 | 文件 | 计划变更 |
 | --- | --- |
-| `mewcode/extensions/__init__.py` | 稳定导出面 |
-| `mewcode/extensions/contracts.py` | Stage 1 value types、Interface、errors |
-| `mewcode/extensions/host.py` | Host/Session/API 事务 Implementation |
-| `mewcode/extensions/builtins.py` | ToolProfile、manifest、typed bindings |
-| `mewcode/runtime/agent_runtime.py` | Agent + Registry + ExtensionSession 组合与关闭 |
-| `mewcode/runtime/__init__.py` | Runtime 稳定导出 |
-| `mewcode/tools/__init__.py` | Contribution、Handle、冲突和兼容查询 |
-| `mewcode/__main__.py` | prompt 和 external teammate Adapter |
-| `mewcode/app.py` | TUI async Runtime Adapter |
-| `mewcode/remote.py` | Remote Runtime Adapter |
-| `mewcode/agents/tool_filter.py` | borrowed ToolView 语义 |
-| `mewcode/mcp/manager.py` | MCP 来源与 Handle owner |
+| `koko_pi_agent/extensions/__init__.py` | 稳定导出面 |
+| `koko_pi_agent/extensions/contracts.py` | Stage 1 value types、Interface、errors |
+| `koko_pi_agent/extensions/host.py` | Host/Session/API 事务 Implementation |
+| `koko_pi_agent/extensions/builtins.py` | ToolProfile、manifest、typed bindings |
+| `koko_pi_agent/runtime/agent_runtime.py` | Agent + Registry + ExtensionSession 组合与关闭 |
+| `koko_pi_agent/runtime/__init__.py` | Runtime 稳定导出 |
+| `koko_pi_agent/tools/__init__.py` | Contribution、Handle、冲突和兼容查询 |
+| `koko_pi_agent/__main__.py` | prompt 和 external teammate Adapter |
+| `koko_pi_agent/app.py` | TUI async Runtime Adapter |
+| `koko_pi_agent/remote.py` | Remote Runtime Adapter |
+| `koko_pi_agent/agents/tool_filter.py` | borrowed ToolView 语义 |
+| `koko_pi_agent/mcp/manager.py` | MCP 来源与 Handle owner |
 | `tests/test_tool_registry.py` | Registry Interface 测试 |
 | `tests/test_extensions.py` | Host Interface 测试 |
 | `tests/test_runtime_composition.py` | profile 与入口组合测试 |
@@ -789,7 +789,7 @@ Stage 1 对 MCPManager 的最小修改计划：
 - `tests/test_teammate_registry.py`、MCP 和 Remote 测试；
 - 全量 pytest；
 - Ruff、compileall、`git diff --check`；
-- 结构搜索确认生产内置 Tool 只由 `mewcode/extensions/builtins.py` 装配。
+- 结构搜索确认生产内置 Tool 只由 `koko_pi_agent/extensions/builtins.py` 装配。
 
 ## 18. 风险与缓解
 

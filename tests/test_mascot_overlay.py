@@ -6,11 +6,11 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, OptionList, Static
 
-import mewcode.app as app_module
-from mewcode.app import ChatInput, MewCodeApp
-from mewcode.config import ProviderConfig
-from mewcode.mascot_overlay import ASCII_MASCOT, CORGI_FRAMES, MascotOverlay
-from mewcode.ui_state import UIStateStore
+import koko_pi_agent.app as app_module
+from koko_pi_agent.app import ChatInput, MewCodeApp
+from koko_pi_agent.config import ProviderConfig
+from koko_pi_agent.mascot_overlay import ASCII_MASCOT, CORGI_FRAMES, MascotOverlay
+from koko_pi_agent.ui_state import UIStateStore
 
 
 class MascotTestApp(App[None]):

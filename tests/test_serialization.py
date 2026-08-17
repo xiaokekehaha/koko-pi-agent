@@ -4,20 +4,20 @@
 # 简历模版：jianli.xiaolinnote.com
 """针对各 provider 序列化构建器的单元测试。
 
-会话层与具体 provider 无关；序列化逻辑位于 mewcode.serialization。
+会话层与具体 provider 无关；序列化逻辑位于 koko_pi_agent.serialization。
 这些测试用于锁定各种线上传输格式（wire format），更关键的是锁定
 Extended Thinking 的往返（round-trip）契约：带 tool-use 的这一轮必须把它
 带签名的 thinking block 一并回传给 API（否则 Anthropic 会返回 400）。
 """
 from __future__ import annotations
 
-from mewcode.conversation import (
+from koko_pi_agent.conversation import (
     ConversationManager,
     ThinkingBlock,
     ToolResultBlock,
     ToolUseBlock,
 )
-from mewcode.serialization import (
+from koko_pi_agent.serialization import (
     build_anthropic_messages,
     build_chat_completion_messages,
     build_messages,

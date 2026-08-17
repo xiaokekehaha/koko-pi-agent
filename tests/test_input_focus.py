@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-import mewcode.app as app_module
-from mewcode.app import ChatInput, ChatTranscript, MewCodeApp, ToolCallBlock
-from mewcode.config import ProviderConfig
+import koko_pi_agent.app as app_module
+from koko_pi_agent.app import ChatInput, ChatTranscript, MewCodeApp, ToolCallBlock
+from koko_pi_agent.config import ProviderConfig
 
 
 class InputFocusTestApp(MewCodeApp):

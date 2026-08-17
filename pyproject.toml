@@ -1,5 +1,5 @@
 [project]
-name = "mewcode"
+name = "koko-pi-agent"
 version = "0.2.0"
 description = "A terminal AI coding assistant"
 requires-python = ">=3.11"
@@ -15,10 +15,12 @@ dependencies = [
 ]
 
 [project.scripts]
-mewcode = "mewcode.__main__:main"
+koko = "koko_pi_agent.__main__:main"
+koko_pi_agent = "koko_pi_agent.__main__:main"
+mewcode = "koko_pi_agent.__main__:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["mewcode"]
+packages = ["koko_pi_agent"]
 
 [build-system]
 requires = ["hatchling"]

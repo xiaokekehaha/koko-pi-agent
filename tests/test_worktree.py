@@ -15,13 +15,13 @@ from pathlib import Path
 
 import pytest
 
-from mewcode.config import WorktreeConfig, load_config
-from mewcode.worktree.changes import count_worktree_changes, has_worktree_changes
-from mewcode.worktree.integration import build_worktree_notice, generate_worktree_name
-from mewcode.worktree.manager import WorktreeError, WorktreeManager
-from mewcode.worktree.models import WorktreeSession
-from mewcode.worktree.session import load_worktree_session, save_worktree_session
-from mewcode.worktree.slug import flatten_slug, validate_slug
+from koko_pi_agent.config import WorktreeConfig, load_config
+from koko_pi_agent.worktree.changes import count_worktree_changes, has_worktree_changes
+from koko_pi_agent.worktree.integration import build_worktree_notice, generate_worktree_name
+from koko_pi_agent.worktree.manager import WorktreeError, WorktreeManager
+from koko_pi_agent.worktree.models import WorktreeSession
+from koko_pi_agent.worktree.session import load_worktree_session, save_worktree_session
+from koko_pi_agent.worktree.slug import flatten_slug, validate_slug
 
 # =========================================================================
 # A. Slug 校验

@@ -7,8 +7,8 @@
 
 import json
 
-from mewcode.teams import protocol
-from mewcode.teams.mailbox import MailboxMessage, create_message
+from koko_pi_agent.teams import protocol
+from koko_pi_agent.teams.mailbox import MailboxMessage, create_message
 
 
 class TestShutdownNegotiation:

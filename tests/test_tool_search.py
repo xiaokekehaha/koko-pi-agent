@@ -12,9 +12,9 @@ import asyncio
 import pytest
 from pydantic import BaseModel
 
-from mewcode.tools import ToolRegistry
-from mewcode.tools.base import Tool, ToolResult
-from mewcode.tools.impl.tool_search import ToolSearchTool
+from koko_pi_agent.tools import ToolRegistry
+from koko_pi_agent.tools.base import Tool, ToolResult
+from koko_pi_agent.tools.impl.tool_search import ToolSearchTool
 
 # ---------------------------------------------------------------------------
 # 辅助工具
@@ -82,7 +82,7 @@ def test_mcp_tool_deferred():
 
     mock_client = MagicMock()
 
-    from mewcode.mcp.tool_wrapper import MCPToolWrapper
+    from koko_pi_agent.mcp.tool_wrapper import MCPToolWrapper
 
     wrapper = MCPToolWrapper(
         server_name="test_server",
@@ -107,7 +107,7 @@ async def test_tool_search_marks_discovered():
     search = ToolSearchTool(reg, protocol="anthropic")
     reg.register(search)
 
-    from mewcode.tools.impl.tool_search import ToolSearchParams
+    from koko_pi_agent.tools.impl.tool_search import ToolSearchParams
 
     params = ToolSearchParams(query="select:DeferredAlpha")
     result = await search.execute(params)
@@ -155,7 +155,7 @@ async def test_tool_search_keyword():
     search = ToolSearchTool(reg, protocol="anthropic")
     reg.register(search)
 
-    from mewcode.tools.impl.tool_search import ToolSearchParams
+    from koko_pi_agent.tools.impl.tool_search import ToolSearchParams
 
     params = ToolSearchParams(query="beta", max_results=5)
     result = await search.execute(params)
@@ -171,7 +171,7 @@ async def test_tool_search_no_match():
     search = ToolSearchTool(reg, protocol="anthropic")
     reg.register(search)
 
-    from mewcode.tools.impl.tool_search import ToolSearchParams
+    from koko_pi_agent.tools.impl.tool_search import ToolSearchParams
 
     params = ToolSearchParams(query="nonexistent_xyz")
     result = await search.execute(params)
@@ -187,7 +187,7 @@ async def test_tool_search_select_multiple():
     search = ToolSearchTool(reg, protocol="anthropic")
     reg.register(search)
 
-    from mewcode.tools.impl.tool_search import ToolSearchParams
+    from koko_pi_agent.tools.impl.tool_search import ToolSearchParams
 
     params = ToolSearchParams(query="select:DeferredAlpha,DeferredBeta")
     result = await search.execute(params)

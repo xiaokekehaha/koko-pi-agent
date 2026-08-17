@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, call
 
 import pytest
 
-from mewcode.commands.registry import Command, CommandRegistry, CommandType
-from mewcode.remote import RemoteServer
-from mewcode.web_content import INDEX_HTML
+from koko_pi_agent.commands.registry import Command, CommandRegistry, CommandType
+from koko_pi_agent.remote import RemoteServer
+from koko_pi_agent.web_content import INDEX_HTML
 
 
 def _make_server_with_mascot_command() -> tuple[RemoteServer, AsyncMock]:

@@ -636,12 +636,12 @@ pi-ai：统一不同 LLM Provider 的消息与流式事件
 
 | Pi | MewCode 当前 | 差距 |
 | --- | --- | --- |
-| `packages/ai` 统一 Message / AssistantMessageEvent / StopReason / Usage | `mewcode/runtime/model_stream.py`、`events.py` | Provider 抽象规模差一个量级，但不变量的形状一致 |
-| `agent-loop.ts` 无状态 + 全部通过回调注入 | `mewcode/runtime/agent_loop.py`（598 行） | 需核对：是否还有状态挂在 loop 上 |
-| `Prepare → Execute → Finalize` 三段管道 | `mewcode/runtime/tool_pipeline.py`（499 行） | 已有对应实现 |
-| `Agent` 有状态外壳 + 双队列 + 单 activeRun | `mewcode/runtime/agent_run.py`、`run_control.py` | 已有对应实现 |
-| `sdk.ts` 单一组合根 | `mewcode/runtime/agent_runtime.py`（166 行） | 已有对应实现 |
-| `prepareNextTurn` 每轮刷新 systemPrompt/tools/model | `mewcode/runtime/turn_preparer.py`（163 行） | 已有对应实现（阶段 2B） |
+| `packages/ai` 统一 Message / AssistantMessageEvent / StopReason / Usage | `koko_pi_agent/runtime/model_stream.py`、`events.py` | Provider 抽象规模差一个量级，但不变量的形状一致 |
+| `agent-loop.ts` 无状态 + 全部通过回调注入 | `koko_pi_agent/runtime/agent_loop.py`（598 行） | 需核对：是否还有状态挂在 loop 上 |
+| `Prepare → Execute → Finalize` 三段管道 | `koko_pi_agent/runtime/tool_pipeline.py`（499 行） | 已有对应实现 |
+| `Agent` 有状态外壳 + 双队列 + 单 activeRun | `koko_pi_agent/runtime/agent_run.py`、`run_control.py` | 已有对应实现 |
+| `sdk.ts` 单一组合根 | `koko_pi_agent/runtime/agent_runtime.py`（166 行） | 已有对应实现 |
+| `prepareNextTurn` 每轮刷新 systemPrompt/tools/model | `koko_pi_agent/runtime/turn_preparer.py`（163 行） | 已有对应实现（阶段 2B） |
 | 会话树 `id`/`parentId` JSONL | 当前为线性会话 | **最大的结构性缺口**，见 [pi-agentmessage 分析](../.specstory/history/2026-08-17_03-24-01Z-pi-agentmessage-llm-message.md) |
 | 观察（`session_*`）与拦截（`session_before_*`）分离 | HookEngine 未区分 | 见 [pi-agentevent 分析](../.specstory/history/2026-08-17_03-23-44Z-pi-agentevent-observer-publish.md) |
 | 每个内核回调槽都接到扩展事件 | ExtensionHost 阶段 2C 进行中 | — |

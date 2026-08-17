@@ -6,12 +6,12 @@ import json
 
 import pytest
 
-from mewcode.app import ChatInput, MewCodeApp
-from mewcode.client import LLMClient
-from mewcode.config import ProviderConfig
-from mewcode.extensions import ToolProfile, tool_names_for_profile
-from mewcode.runtime import RunControl, RunInputKind
-from mewcode.tools.base import StreamEnd, TextDelta
+from koko_pi_agent.app import ChatInput, MewCodeApp
+from koko_pi_agent.client import LLMClient
+from koko_pi_agent.config import ProviderConfig
+from koko_pi_agent.extensions import ToolProfile, tool_names_for_profile
+from koko_pi_agent.runtime import RunControl, RunInputKind
+from koko_pi_agent.tools.base import StreamEnd, TextDelta
 
 
 class _GatedClient(LLMClient):
@@ -54,9 +54,9 @@ async def test_tui_provider_owns_tui_profile_runtime(
         return None
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("mewcode.app.create_client", lambda _provider: object())
+    monkeypatch.setattr("koko_pi_agent.app.create_client", lambda _provider: object())
     monkeypatch.setattr(
-        "mewcode.app.resolve_context_window",
+        "koko_pi_agent.app.resolve_context_window",
         skip_context_resolution,
     )
     app = MewCodeApp(
@@ -115,9 +115,9 @@ async def test_concurrent_provider_initialization_leaves_one_active_runtime(
         return None
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("mewcode.app.create_client", lambda _provider: object())
+    monkeypatch.setattr("koko_pi_agent.app.create_client", lambda _provider: object())
     monkeypatch.setattr(
-        "mewcode.app.resolve_context_window",
+        "koko_pi_agent.app.resolve_context_window",
         skip_context_resolution,
     )
     providers = [
@@ -136,7 +136,7 @@ async def test_concurrent_provider_initialization_leaves_one_active_runtime(
     )
     opened = []
 
-    from mewcode.runtime import AgentRuntime
+    from koko_pi_agent.runtime import AgentRuntime
 
     open_runtime = AgentRuntime.open.__func__
 
@@ -176,9 +176,9 @@ async def test_tui_active_inputs_queue_without_mutating_conversation(
         return None
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("mewcode.app.create_client", lambda _provider: object())
+    monkeypatch.setattr("koko_pi_agent.app.create_client", lambda _provider: object())
     monkeypatch.setattr(
-        "mewcode.app.resolve_context_window",
+        "koko_pi_agent.app.resolve_context_window",
         skip_context_resolution,
     )
     app = MewCodeApp(
@@ -238,9 +238,9 @@ async def test_tui_real_run_delivers_and_persists_steering_once(
         return None
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("mewcode.app.create_client", lambda _provider: client)
+    monkeypatch.setattr("koko_pi_agent.app.create_client", lambda _provider: client)
     monkeypatch.setattr(
-        "mewcode.app.resolve_context_window",
+        "koko_pi_agent.app.resolve_context_window",
         skip_context_resolution,
     )
     app = MewCodeApp(

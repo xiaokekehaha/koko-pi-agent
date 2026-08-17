@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from mewcode.runtime import (
+from koko_pi_agent.runtime import (
     RunControl,
     RunControlState,
     RunInputClosedError,

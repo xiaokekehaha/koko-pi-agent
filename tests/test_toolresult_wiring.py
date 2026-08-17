@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from mewcode.agent import Agent
-from mewcode.conversation import ConversationManager
-from mewcode.tools import ToolRegistry
-from mewcode.tools.base import (
+from koko_pi_agent.agent import Agent
+from koko_pi_agent.conversation import ConversationManager
+from koko_pi_agent.tools import ToolRegistry
+from koko_pi_agent.tools.base import (
     StreamEnd,
     TextDelta,
     Tool,

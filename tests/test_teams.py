@@ -18,35 +18,35 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mewcode.teams.models import (
+from koko_pi_agent.teams.models import (
     AgentTeam,
     BackendType,
     TeammateInfo,
     resolve_team_dir,
     unique_team_name,
 )
-from mewcode.teams.shared_task import SharedTask, SharedTaskStore
-from mewcode.teams.mailbox import Mailbox, MailboxMessage, create_message
-from mewcode.teams.registry import AgentNameRegistry
-from mewcode.teams.backend_detect import (
+from koko_pi_agent.teams.shared_task import SharedTask, SharedTaskStore
+from koko_pi_agent.teams.mailbox import Mailbox, MailboxMessage, create_message
+from koko_pi_agent.teams.registry import AgentNameRegistry
+from koko_pi_agent.teams.backend_detect import (
     BackendDetectionError,
     detect_backend,
     detect_backend_from_env,
     detect_pane_backend,
 )
-from mewcode.teams.coordinator import (
+from koko_pi_agent.teams.coordinator import (
     get_coordinator_system_prompt,
     get_coordinator_user_context,
 )
-from mewcode.agents.tool_filter import (
+from koko_pi_agent.agents.tool_filter import (
     COORDINATOR_MODE_ALLOWED_TOOLS,
     IN_PROCESS_TEAMMATE_ALLOWED_TOOLS,
     TEAMMATE_COORDINATION_TOOLS,
     build_teammate_tools,
     apply_coordinator_filter,
 )
-from mewcode.tools import ToolRegistry
-from mewcode.tools.base import Tool, ToolResult
+from koko_pi_agent.tools import ToolRegistry
+from koko_pi_agent.tools.base import Tool, ToolResult
 
 # =====================================================================
 # 辅助工具
@@ -172,10 +172,10 @@ class TestModels:
         assert team.all_idle() is False
 
     def test_unique_team_name(self, tmp_dir):
-        with patch("mewcode.teams.models.Path.home", return_value=Path(tmp_dir)):
+        with patch("koko_pi_agent.teams.models.Path.home", return_value=Path(tmp_dir)):
             name1 = unique_team_name("my-team")
             assert name1 == "my-team"
-            (Path(tmp_dir) / ".mewcode" / "teams" / "my-team").mkdir(parents=True)
+            (Path(tmp_dir) / ".koko" / "teams" / "my-team").mkdir(parents=True)
             name2 = unique_team_name("my-team")
             assert name2 == "my-team-2"
 
@@ -404,7 +404,7 @@ class TestBackendDetect:
         env = self._clear_env()
         env["TMUX"] = "/tmp/tmux-1234/default,12345,0"
         with patch.dict(os.environ, env, clear=True):
-            with patch("mewcode.teams.backend_detect.sys.platform", "win32"):
+            with patch("koko_pi_agent.teams.backend_detect.sys.platform", "win32"):
                 assert detect_backend() == BackendType.IN_PROCESS
 
     def test_detect_backend_posix_tmux(self):
@@ -412,14 +412,14 @@ class TestBackendDetect:
         env = self._clear_env()
         env["TMUX"] = "/tmp/tmux-1234/default,12345,0"
         with patch.dict(os.environ, env, clear=True):
-            with patch("mewcode.teams.backend_detect.sys.platform", "linux"):
+            with patch("koko_pi_agent.teams.backend_detect.sys.platform", "linux"):
                 assert detect_backend() == BackendType.TMUX
 
     def test_detect_backend_posix_no_session(self):
         # 非 Windows 但不在任何会话里 → 进程内
         env = self._clear_env()
         with patch.dict(os.environ, env, clear=True):
-            with patch("mewcode.teams.backend_detect.sys.platform", "linux"):
+            with patch("koko_pi_agent.teams.backend_detect.sys.platform", "linux"):
                 assert detect_backend() == BackendType.IN_PROCESS
 
     def test_pane_backend_posix_iterm(self):
@@ -427,14 +427,14 @@ class TestBackendDetect:
         env = self._clear_env()
         env["ITERM_SESSION_ID"] = "w0t0p0:ABC-123"
         with patch.dict(os.environ, env, clear=True):
-            with patch("mewcode.teams.backend_detect.sys.platform", "darwin"):
+            with patch("koko_pi_agent.teams.backend_detect.sys.platform", "darwin"):
                 assert detect_pane_backend() == BackendType.ITERM2
 
     def test_pane_backend_no_session_falls_back(self):
         # 没有会话环境变量时静默回退进程内，而非抛异常
         env = self._clear_env()
         with patch.dict(os.environ, env, clear=True):
-            with patch("mewcode.teams.backend_detect.sys.platform", "linux"):
+            with patch("koko_pi_agent.teams.backend_detect.sys.platform", "linux"):
                 assert detect_pane_backend() == BackendType.IN_PROCESS
 
 # =====================================================================
@@ -504,7 +504,7 @@ class TestCoordinatorMode:
         agent._team_manager = MagicMock()
         agent._team_manager.list_teams.return_value = ["squad"] * team_count
         # 用真实 property 求值，不走 MagicMock 的自动属性
-        from mewcode.agent import Agent
+        from koko_pi_agent.agent import Agent
         return Agent.coordinator_mode.fget(agent)
 
     def test_disabled_when_flag_off(self):
@@ -559,13 +559,13 @@ class TestCoordinatorMode:
 
 class TestConfigExtensions:
     def test_teammate_mode_defaults(self):
-        from mewcode.config import AppConfig
+        from koko_pi_agent.config import AppConfig
         cfg = AppConfig(providers=[])
         assert cfg.teammate_mode == ""
         assert cfg.enable_coordinator_mode is False
 
     def test_load_config_with_team_fields(self, tmp_dir):
-        from mewcode.config import load_config
+        from koko_pi_agent.config import load_config
         config_path = Path(tmp_dir) / "config.yaml"
         config_path.write_text(
             "providers:\n"
@@ -581,7 +581,7 @@ class TestConfigExtensions:
         assert cfg.enable_coordinator_mode is True
 
     def test_invalid_teammate_mode(self, tmp_dir):
-        from mewcode.config import ConfigError, load_config
+        from koko_pi_agent.config import ConfigError, load_config
         config_path = Path(tmp_dir) / "config.yaml"
         config_path.write_text(
             "providers:\n"
@@ -601,14 +601,14 @@ class TestConfigExtensions:
 class TestTranscript:
 
     def test_save_and_load(self, tmp_dir):
-        from mewcode.conversation import ConversationManager
-        from mewcode.teams.transcript import load_transcript, save_transcript
+        from koko_pi_agent.conversation import ConversationManager
+        from koko_pi_agent.teams.transcript import load_transcript, save_transcript
 
         conv = ConversationManager()
         conv.add_user_message("Hello agent")
         conv.add_assistant_message("Hello user")
 
-        with patch("mewcode.teams.models.Path.home", return_value=Path(tmp_dir)):
+        with patch("koko_pi_agent.teams.models.Path.home", return_value=Path(tmp_dir)):
             save_transcript("test-team", "agent-001", conv)
             restored = load_transcript("test-team", "agent-001")
 
@@ -619,8 +619,8 @@ class TestTranscript:
         assert restored.history[1].role == "assistant"
 
     def test_load_nonexistent(self, tmp_dir):
-        from mewcode.teams.transcript import load_transcript
-        with patch("mewcode.teams.models.Path.home", return_value=Path(tmp_dir)):
+        from koko_pi_agent.teams.transcript import load_transcript
+        with patch("koko_pi_agent.teams.models.Path.home", return_value=Path(tmp_dir)):
             result = load_transcript("no-team", "no-agent")
         assert result is None
 
@@ -630,7 +630,7 @@ class TestTranscript:
 
 class TestAgentCoordinatorIntegration:
     def test_normal_prompt(self):
-        from mewcode.prompts import build_system_prompt, IDENTITY_SECTION
+        from koko_pi_agent.prompts import build_system_prompt, IDENTITY_SECTION
         prompt = build_system_prompt()
         # 验证 identity section 内容包含在 prompt 中
         assert "MewCode" in prompt
@@ -639,8 +639,8 @@ class TestAgentCoordinatorIntegration:
     def test_coordinator_guidance_is_a_reminder_not_a_replacement(self):
         # 调度指引每轮以 system-reminder 注入，系统提示词本身不受影响：
         # Lead 进了 coordinator 也仍然需要身份、环境、项目指令这些基础段落
-        from mewcode.prompts import build_system_prompt, IDENTITY_SECTION
-        from mewcode.teams.coordinator import get_coordinator_system_prompt
+        from koko_pi_agent.prompts import build_system_prompt, IDENTITY_SECTION
+        from koko_pi_agent.teams.coordinator import get_coordinator_system_prompt
 
         prompt = build_system_prompt()
         assert IDENTITY_SECTION.content[:30] in prompt
@@ -650,8 +650,8 @@ class TestAgentCoordinatorIntegration:
         assert "coordinator" in reminder.lower()
 
     def test_coordinator_reminder_lists_only_allowed_tools(self):
-        from mewcode.agents.tool_filter import COORDINATOR_MODE_ALLOWED_TOOLS
-        from mewcode.teams.coordinator import get_coordinator_system_prompt
+        from koko_pi_agent.agents.tool_filter import COORDINATOR_MODE_ALLOWED_TOOLS
+        from koko_pi_agent.teams.coordinator import get_coordinator_system_prompt
 
         reminder = get_coordinator_system_prompt()
         section = reminder[
@@ -668,7 +668,7 @@ class TestTaskStopTool:
 
     def _mgr_with_member(self, backend="in-process", active=True):
         from unittest.mock import MagicMock
-        from mewcode.teams.manager import TeamManager
+        from koko_pi_agent.teams.manager import TeamManager
 
         mgr = TeamManager()
         team = mgr.create_team("squad", "lead-1", description="t")
@@ -681,7 +681,7 @@ class TestTaskStopTool:
 
     @pytest.mark.asyncio
     async def test_stops_in_process_teammate(self):
-        from mewcode.tools.task_stop import TaskStopTool, TaskStopParams
+        from koko_pi_agent.tools.task_stop import TaskStopTool, TaskStopParams
 
         mgr, _, member = self._mgr_with_member()
         handle = MagicMock()
@@ -696,7 +696,7 @@ class TestTaskStopTool:
     async def test_stops_pane_teammate(self):
         # tmux / iTerm2 的队员是独立进程，不走 in-process 句柄，
         # 只认句柄就会漏掉这一类队员
-        from mewcode.tools.task_stop import TaskStopTool, TaskStopParams
+        from koko_pi_agent.tools.task_stop import TaskStopTool, TaskStopParams
 
         mgr, _, member = self._mgr_with_member(backend="tmux")
         mgr.register_pane_id(member.agent_id, "%42")
@@ -709,7 +709,7 @@ class TestTaskStopTool:
 
     @pytest.mark.asyncio
     async def test_unknown_teammate_is_an_error(self):
-        from mewcode.tools.task_stop import TaskStopTool, TaskStopParams
+        from koko_pi_agent.tools.task_stop import TaskStopTool, TaskStopParams
 
         mgr, _, _ = self._mgr_with_member()
         res = await TaskStopTool(team_manager=mgr).execute(TaskStopParams(teammate="ghost"))
@@ -718,7 +718,7 @@ class TestTaskStopTool:
     @pytest.mark.asyncio
     async def test_idle_teammate_is_not_an_error(self):
         # 已经停下的队员再停一次不该报错，免得模型拿着报错反复重试
-        from mewcode.tools.task_stop import TaskStopTool, TaskStopParams
+        from koko_pi_agent.tools.task_stop import TaskStopTool, TaskStopParams
 
         mgr, _, _ = self._mgr_with_member()
         res = await TaskStopTool(team_manager=mgr).execute(TaskStopParams(teammate="scout"))
@@ -729,14 +729,14 @@ class TestTaskStopTool:
 class TestCoordinatorReminderShape:
     def test_reminder_matches_real_notification_format(self):
         # 指引描述的回传格式必须和 drain 出来的一致
-        from mewcode.teams.coordinator import get_coordinator_system_prompt
+        from koko_pi_agent.teams.coordinator import get_coordinator_system_prompt
 
         p = get_coordinator_system_prompt()
         assert "<team-notification" in p and "from=" in p
         assert "<task_id>" not in p
 
     def test_reminder_goes_sparse_after_first_turn(self):
-        from mewcode.teams.coordinator import get_coordinator_reminder
+        from koko_pi_agent.teams.coordinator import get_coordinator_reminder
 
         full = get_coordinator_reminder(1)
         second = get_coordinator_reminder(2)

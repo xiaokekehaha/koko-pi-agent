@@ -1678,12 +1678,12 @@ def test_runtime_rolls_back_when_mount_fails() -> None:
 
 | 教学案例 | MewCode 真实位置 | 阅读重点 |
 | --- | --- | --- |
-| `contracts.py` 中的 `Tool` | `mewcode/tools/base.py` | 抽象基类、Pydantic 参数模型、异步执行、Tool schema |
-| `registry.py` | `mewcode/tools/__init__.py` | 注册、启停、延迟发现和不同协议的 schema |
-| `MiniAgent` | `mewcode/agent.py` | 模型调用、Tool Call 执行和对话循环 |
-| `bootstrap.py` | `mewcode/__main__.py` | 客户端、权限、工具、Agent 和 Team 的组装 |
-| `config.yaml` | `.mewcode/config.yaml` 与 `mewcode/config.py` | 配置加载、Provider 选择和默认值 |
-| 配置验证 | `mewcode/validator.py` | 启动前发现无效配置 |
+| `contracts.py` 中的 `Tool` | `koko_pi_agent/tools/base.py` | 抽象基类、Pydantic 参数模型、异步执行、Tool schema |
+| `registry.py` | `koko_pi_agent/tools/__init__.py` | 注册、启停、延迟发现和不同协议的 schema |
+| `MiniAgent` | `koko_pi_agent/agent.py` | 模型调用、Tool Call 执行和对话循环 |
+| `bootstrap.py` | `koko_pi_agent/__main__.py` | 客户端、权限、工具、Agent 和 Team 的组装 |
+| `config.yaml` | `.koko/config.yaml` 与 `koko_pi_agent/config.py` | 配置加载、Provider 选择和默认值 |
+| 配置验证 | `koko_pi_agent/validator.py` | 启动前发现无效配置 |
 
 需要特别注意一个差异：教学版注册表遇到同名 Tool 会抛错；当前 MewCode 的 `ToolRegistry.register()` 会用新对象覆盖旧对象。教学版选择快速失败，是为了让新手更容易观察冲突并理解独占注册。不要把教学行为误认为当前生产实现。
 

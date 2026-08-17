@@ -16,12 +16,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from mewcode.__main__ import _open_teammate_runtime
+from koko_pi_agent.__main__ import _open_teammate_runtime
 from pydantic import BaseModel
 
-from mewcode.teams.manager import TeamManager
-from mewcode.tools import ToolRegistry, ToolView
-from mewcode.tools.base import Tool
+from koko_pi_agent.teams.manager import TeamManager
+from koko_pi_agent.tools import ToolRegistry, ToolView
+from koko_pi_agent.tools.base import Tool
 
 
 @pytest.mark.asyncio
@@ -85,8 +85,8 @@ class _StubTool(Tool):
 
 def test_teammate_tools_block_team_management():
     """进程内队友从 Lead 的注册表过滤而来，团队成员管理工具不能继承过去。"""
-    from mewcode.agents.tool_filter import build_teammate_tools
-    from mewcode.teams.models import BackendType
+    from koko_pi_agent.agents.tool_filter import build_teammate_tools
+    from koko_pi_agent.teams.models import BackendType
 
     parent = ToolRegistry()
     for name in [
@@ -130,12 +130,12 @@ async def test_external_teammate_cancellation_closes_runtime(
     tmp_path,
     monkeypatch,
 ) -> None:
-    import mewcode.client
-    import mewcode.memory.instructions
-    import mewcode.teams.manager
-    import mewcode.teams.registry
-    import mewcode.teams.spawn_inprocess
-    from mewcode.__main__ import _run_teammate
+    import koko_pi_agent.client
+    import koko_pi_agent.memory.instructions
+    import koko_pi_agent.teams.manager
+    import koko_pi_agent.teams.registry
+    import koko_pi_agent.teams.spawn_inprocess
+    from koko_pi_agent.__main__ import _run_teammate
 
     provider = SimpleNamespace(
         protocol="anthropic",
@@ -143,21 +143,21 @@ async def test_external_teammate_cancellation_closes_runtime(
     )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "mewcode.__main__.load_config",
+        "koko_pi_agent.__main__.load_config",
         lambda: SimpleNamespace(providers=[provider], mcp_servers=[]),
     )
-    monkeypatch.setattr(mewcode.client, "create_client", lambda _provider: object())
+    monkeypatch.setattr(koko_pi_agent.client, "create_client", lambda _provider: object())
 
     async def resolve_context_window(_provider) -> None:
         return None
 
     monkeypatch.setattr(
-        mewcode.client,
+        koko_pi_agent.client,
         "resolve_context_window",
         resolve_context_window,
     )
     monkeypatch.setattr(
-        mewcode.memory.instructions,
+        koko_pi_agent.memory.instructions,
         "load_instructions",
         lambda _work_dir: "",
     )
@@ -169,9 +169,9 @@ async def test_external_teammate_cancellation_closes_runtime(
         def get_mailbox(self, _team_name):
             return object()
 
-    monkeypatch.setattr(mewcode.teams.manager, "TeamManager", FakeTeamManager)
+    monkeypatch.setattr(koko_pi_agent.teams.manager, "TeamManager", FakeTeamManager)
     monkeypatch.setattr(
-        mewcode.teams.registry.AgentNameRegistry,
+        koko_pi_agent.teams.registry.AgentNameRegistry,
         "instance",
         classmethod(lambda _cls: SimpleNamespace(register=lambda *_args: None)),
     )
@@ -190,7 +190,7 @@ async def test_external_teammate_cancellation_closes_runtime(
     async def open_runtime(**_kwargs):
         return runtime
 
-    monkeypatch.setattr("mewcode.__main__._open_teammate_runtime", open_runtime)
+    monkeypatch.setattr("koko_pi_agent.__main__._open_teammate_runtime", open_runtime)
 
     class Handle:
         def __init__(self) -> None:
@@ -205,7 +205,7 @@ async def test_external_teammate_cancellation_closes_runtime(
 
     handle = Handle()
     monkeypatch.setattr(
-        mewcode.teams.spawn_inprocess,
+        koko_pi_agent.teams.spawn_inprocess,
         "spawn_inprocess_teammate",
         lambda **_kwargs: handle,
     )

@@ -13,13 +13,13 @@ import asyncio
 import shutil
 from unittest.mock import MagicMock
 
-from mewcode.agents.tool_filter import apply_coordinator_filter
-from mewcode.teams.manager import TeamManager
-from mewcode.teams.models import resolve_team_dir
-from mewcode.tools.team_create import TeamCreateTool, TeamCreateParams
-from mewcode.tools.team_delete import TeamDeleteTool, TeamDeleteParams
-from mewcode.tools import ToolRegistry
-from mewcode.tools.base import Tool, ToolResult
+from koko_pi_agent.agents.tool_filter import apply_coordinator_filter
+from koko_pi_agent.teams.manager import TeamManager
+from koko_pi_agent.teams.models import resolve_team_dir
+from koko_pi_agent.tools.team_create import TeamCreateTool, TeamCreateParams
+from koko_pi_agent.tools.team_delete import TeamDeleteTool, TeamDeleteParams
+from koko_pi_agent.tools import ToolRegistry
+from koko_pi_agent.tools.base import Tool, ToolResult
 
 
 class DummyTool(Tool):

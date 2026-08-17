@@ -4,12 +4,12 @@ from dataclasses import dataclass
 
 import pytest
 
-from mewcode.agents.loader import AgentLoader
-from mewcode.agents.task_manager import TaskManager
-from mewcode.agents.trace import TraceManager
-from mewcode.client import LLMClient
-from mewcode.config import AppConfig, ProviderConfig
-from mewcode.extensions import (
+from koko_pi_agent.agents.loader import AgentLoader
+from koko_pi_agent.agents.task_manager import TaskManager
+from koko_pi_agent.agents.trace import TraceManager
+from koko_pi_agent.client import LLMClient
+from koko_pi_agent.config import AppConfig, ProviderConfig
+from koko_pi_agent.extensions import (
     BuiltinRuntimeBindings,
     ExtensionCatalog,
     ExtensionDefinition,
@@ -19,13 +19,13 @@ from mewcode.extensions import (
     create_builtin_extension_host,
     tool_names_for_profile,
 )
-from mewcode.permissions import PermissionMode
-from mewcode.runtime import AgentRuntime, AgentRuntimeRequest
-from mewcode.skills.loader import SkillLoader
-from mewcode.teams.manager import TeamManager
-from mewcode.tools import ToolView
-from mewcode.tools.base import StreamEnd, TextDelta, Tool, ToolResult
-from mewcode.worktree import WorktreeManager
+from koko_pi_agent.permissions import PermissionMode
+from koko_pi_agent.runtime import AgentRuntime, AgentRuntimeRequest
+from koko_pi_agent.skills.loader import SkillLoader
+from koko_pi_agent.teams.manager import TeamManager
+from koko_pi_agent.tools import ToolView
+from koko_pi_agent.tools.base import StreamEnd, TextDelta, Tool, ToolResult
+from koko_pi_agent.worktree import WorktreeManager
 
 
 class _OwnedTool(Tool):
@@ -412,8 +412,8 @@ async def test_prompt_entrypoint_runs_inside_owned_runtime_and_closes_it(
     monkeypatch,
     capsys,
 ) -> None:
-    import mewcode.client
-    from mewcode.__main__ import _run_prompt
+    import koko_pi_agent.client
+    from koko_pi_agent.__main__ import _run_prompt
 
     opened: list[AgentRuntime] = []
     original_open = AgentRuntime.open.__func__
@@ -432,10 +432,10 @@ async def test_prompt_entrypoint_runs_inside_owned_runtime_and_closes_it(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        mewcode.client, "create_client", lambda provider: _PromptClient()
+        koko_pi_agent.client, "create_client", lambda provider: _PromptClient()
     )
     monkeypatch.setattr(
-        mewcode.client, "resolve_context_window", skip_context_resolution
+        koko_pi_agent.client, "resolve_context_window", skip_context_resolution
     )
     monkeypatch.setattr(AgentRuntime, "open", classmethod(recording_open))
     config = AppConfig(
@@ -492,8 +492,8 @@ async def test_prompt_entrypoint_closes_runtime_when_agent_run_raises(
     tmp_path,
     monkeypatch,
 ) -> None:
-    import mewcode.client
-    from mewcode.__main__ import _run_prompt
+    import koko_pi_agent.client
+    from koko_pi_agent.__main__ import _run_prompt
 
     opened: list[AgentRuntime] = []
     original_open = AgentRuntime.open.__func__
@@ -517,9 +517,9 @@ async def test_prompt_entrypoint_closes_runtime_when_agent_run_raises(
         return None
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(mewcode.client, "create_client", lambda _provider: object())
+    monkeypatch.setattr(koko_pi_agent.client, "create_client", lambda _provider: object())
     monkeypatch.setattr(
-        mewcode.client,
+        koko_pi_agent.client,
         "resolve_context_window",
         skip_context_resolution,
     )

@@ -5,13 +5,13 @@ from dataclasses import dataclass
 
 import pytest
 
-from mewcode.agent import Agent
-from mewcode.client import LLMClient
-from mewcode.config import ProviderConfig
-from mewcode.conversation import ConversationManager
-from mewcode.extensions import ToolProfile, tool_names_for_profile
-from mewcode.remote import RemoteServer
-from mewcode.runtime import (
+from koko_pi_agent.agent import Agent
+from koko_pi_agent.client import LLMClient
+from koko_pi_agent.config import ProviderConfig
+from koko_pi_agent.conversation import ConversationManager
+from koko_pi_agent.extensions import ToolProfile, tool_names_for_profile
+from koko_pi_agent.remote import RemoteServer
+from koko_pi_agent.runtime import (
     QueuedRunInput,
     RunFinished,
     RunInputClosedError,
@@ -19,8 +19,8 @@ from mewcode.runtime import (
     RunInputKind,
     RunResult,
 )
-from mewcode.tools import ToolRegistry
-from mewcode.tools.base import StreamEnd, TextDelta
+from koko_pi_agent.tools import ToolRegistry
+from koko_pi_agent.tools.base import StreamEnd, TextDelta
 
 
 class _GatedClient(LLMClient):
@@ -47,7 +47,7 @@ async def test_remote_initialization_owns_remote_profile_runtime(
     monkeypatch,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("mewcode.remote.create_client", lambda _provider: object())
+    monkeypatch.setattr("koko_pi_agent.remote.create_client", lambda _provider: object())
     server = RemoteServer(
         providers=[
             ProviderConfig(
@@ -115,7 +115,7 @@ async def test_remote_shutdown_is_ordered_and_idempotent() -> None:
 
 class _QueueingRuntime:
     def __init__(self) -> None:
-        from mewcode.runtime import RunControl
+        from koko_pi_agent.runtime import RunControl
 
         self.control = RunControl()
 

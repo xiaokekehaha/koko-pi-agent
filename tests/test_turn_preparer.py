@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from mewcode.context import CompactEvent
-from mewcode.conversation import ConversationManager, Message
-from mewcode.hooks.engine import HookNotification
-from mewcode.runtime.events import CompactNotification
-from mewcode.runtime.turn_preparer import TurnPreparer
+from koko_pi_agent.context import CompactEvent
+from koko_pi_agent.conversation import ConversationManager, Message
+from koko_pi_agent.hooks.engine import HookNotification
+from koko_pi_agent.runtime.events import CompactNotification
+from koko_pi_agent.runtime.turn_preparer import TurnPreparer
 
 
 class _Cancellation:
@@ -98,7 +98,7 @@ async def test_prepare_owns_model_context_projection(
         return None
 
     monkeypatch.setattr(
-        "mewcode.runtime.turn_preparer.auto_compact",
+        "koko_pi_agent.runtime.turn_preparer.auto_compact",
         no_compaction,
     )
     agent = _agent(tmp_path)
@@ -138,7 +138,7 @@ async def test_prepare_reinjects_context_after_compaction(
         return CompactEvent(before_tokens=12_345)
 
     monkeypatch.setattr(
-        "mewcode.runtime.turn_preparer.auto_compact",
+        "koko_pi_agent.runtime.turn_preparer.auto_compact",
         compact,
     )
     agent = _agent(tmp_path)

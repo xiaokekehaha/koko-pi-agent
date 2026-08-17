@@ -16,9 +16,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from mewcode.client import resolve_context_window
-from mewcode.config import ProviderConfig
-from mewcode.validator import (
+from koko_pi_agent.client import resolve_context_window
+from koko_pi_agent.config import ProviderConfig
+from koko_pi_agent.validator import (
     ConfigError,
     lookup_model_context_window,
     validate_providers,
@@ -120,7 +120,7 @@ class TestAutoFetch:
         p = _provider(model="claude-sonnet-4-6")
         fake = AsyncMock()
         fake.fetch_model_context_window = AsyncMock(return_value=555_000)
-        with patch("mewcode.client.create_client", return_value=fake) as mk:
+        with patch("koko_pi_agent.client.create_client", return_value=fake) as mk:
             await resolve_context_window(p)
             # 此时第 2 层的值优先级高于映射表（200000）。
             assert p.get_context_window() == 555_000
@@ -135,7 +135,7 @@ class TestAutoFetch:
         fake.fetch_model_context_window = AsyncMock(
             side_effect=RuntimeError("boom")
         )
-        with patch("mewcode.client.create_client", return_value=fake):
+        with patch("koko_pi_agent.client.create_client", return_value=fake):
             # 不应抛出异常。
             await resolve_context_window(p)
         # 对 claude 回退到映射表。
@@ -146,7 +146,7 @@ class TestAutoFetch:
         p = _provider(model="totally-unknown-model")
         fake = AsyncMock()
         fake.fetch_model_context_window = AsyncMock(return_value=None)
-        with patch("mewcode.client.create_client", return_value=fake):
+        with patch("koko_pi_agent.client.create_client", return_value=fake):
             await resolve_context_window(p)
         # 既没获取到、也没匹配到 → 使用保守默认值。
         assert p.get_context_window() == 128_000
@@ -156,7 +156,7 @@ class TestAutoFetch:
         # 例如缺少 API key 会在 create_client 内部抛错 —— 必须被吞掉。
         p = _provider(model="claude-sonnet-4-6")
         with patch(
-            "mewcode.client.create_client",
+            "koko_pi_agent.client.create_client",
             side_effect=Exception("no api key"),
         ):
             await resolve_context_window(p)
@@ -165,7 +165,7 @@ class TestAutoFetch:
     @pytest.mark.asyncio
     async def test_non_anthropic_provider_is_not_fetched(self):
         p = _provider(protocol="openai-compat", model="gpt-4o")
-        with patch("mewcode.client.create_client") as mk:
+        with patch("koko_pi_agent.client.create_client") as mk:
             await resolve_context_window(p)
             mk.assert_not_called()
         # 完全通过映射表解析。
@@ -174,7 +174,7 @@ class TestAutoFetch:
     @pytest.mark.asyncio
     async def test_explicit_config_skips_fetch(self):
         p = _provider(model="claude-sonnet-4-6", context_window=4096)
-        with patch("mewcode.client.create_client") as mk:
+        with patch("koko_pi_agent.client.create_client") as mk:
             await resolve_context_window(p)
             mk.assert_not_called()
         assert p.get_context_window() == 4096
@@ -184,7 +184,7 @@ class TestAutoFetch:
         p = _provider(model="claude-sonnet-4-6")
         fake = AsyncMock()
         fake.fetch_model_context_window = AsyncMock(return_value=0)
-        with patch("mewcode.client.create_client", return_value=fake):
+        with patch("koko_pi_agent.client.create_client", return_value=fake):
             await resolve_context_window(p)
         # 0 绝不能被缓存；仍然走映射表。
         assert p._fetched_context_window == 0

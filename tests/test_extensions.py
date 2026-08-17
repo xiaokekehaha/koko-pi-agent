@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from pydantic import BaseModel
 
-from mewcode.extensions import (
+from koko_pi_agent.extensions import (
     DuplicateExtensionIdError,
     ExtensionCatalog,
     ExtensionDefinition,
@@ -16,8 +16,8 @@ from mewcode.extensions import (
     SessionContext,
     ToolProfile,
 )
-from mewcode.tools import ToolConflictError, ToolRegistry
-from mewcode.tools.base import Tool, ToolResult
+from koko_pi_agent.tools import ToolConflictError, ToolRegistry
+from koko_pi_agent.tools.base import Tool, ToolResult
 
 
 class _Params(BaseModel):

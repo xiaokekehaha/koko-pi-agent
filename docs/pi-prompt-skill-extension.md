@@ -546,7 +546,7 @@ private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promi
 | **注册项挂在扩展对象自己身上，不进全局注册表** | 非常值。这直接解决设计文档里"注册表知道对象，不知道来自哪个扩展"那条 |
 | **旧 ctx 毒化 + 明确错误信息**，而不是假装能回收 | 非常值。Python 侧对应的是：`ExtensionSession` 关闭后所有 API 抛 `RuntimeError`，消息里写清正确用法 |
 | **代际号（generation）做批量缓存失效** | 值。比维护订阅者列表简单 |
-| **项目信任前只加载全局扩展，且信任决策可被扩展接管** | 值，尤其是团队共享 `.mewcode/` 配置的场景 |
+| **项目信任前只加载全局扩展，且信任决策可被扩展接管** | 值，尤其是团队共享 `.koko/` 配置的场景 |
 | 资源清理（定时器/连接）完全交给扩展自己 | **不建议照抄**。Python 有 `AsyncExitStack` 和 `TaskGroup`，做自动清理的成本远低于 TS。设计文档里的 `ResourceScope` + `TaskSupervisor` 方向比 pi 更稳 |
 
 最后一条是这次对照里唯一「MewCode 应该比 pi 做得更多」的地方。pi 选择不做资源追踪是 TypeScript 生态的现实约束；Python 的 `async with` + `AsyncExitStack` 能用几十行拿到确定性的逆序清理，没有理由放弃。

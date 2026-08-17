@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 
-from mewcode.config import (
+from koko_pi_agent.config import (
     AppConfig,
     ConfigError,
     MCPServerConfig,
@@ -178,8 +178,8 @@ class TestLoadConfigMCP:
 class TestMCPToolWrapper:
     def test_name_format(self) -> None:
         from mcp import types as mcp_types
-        from mewcode.mcp.tool_wrapper import MCPToolWrapper
-        from mewcode.mcp.client import MCPClient
+        from koko_pi_agent.mcp.tool_wrapper import MCPToolWrapper
+        from koko_pi_agent.mcp.client import MCPClient
 
         tool_def = mcp_types.Tool(
             name="search_issues",
@@ -202,7 +202,7 @@ class TestMCPToolWrapper:
 
     def test_get_schema_uses_original_input_schema(self) -> None:
         from mcp import types as mcp_types
-        from mewcode.mcp.tool_wrapper import MCPToolWrapper
+        from koko_pi_agent.mcp.tool_wrapper import MCPToolWrapper
 
         input_schema = {
             "type": "object",
@@ -228,7 +228,7 @@ class TestMCPToolWrapper:
 class TestExtractText:
     def test_text_content(self) -> None:
         from mcp import types as mcp_types
-        from mewcode.mcp.tool_wrapper import _extract_text
+        from koko_pi_agent.mcp.tool_wrapper import _extract_text
 
         content = [
             mcp_types.TextContent(type="text", text="hello"),
@@ -237,13 +237,13 @@ class TestExtractText:
         assert _extract_text(content) == "hello\nworld"
 
     def test_empty_content(self) -> None:
-        from mewcode.mcp.tool_wrapper import _extract_text
+        from koko_pi_agent.mcp.tool_wrapper import _extract_text
 
         assert _extract_text([]) == "(no output)"
 
     def test_image_content(self) -> None:
         from mcp import types as mcp_types
-        from mewcode.mcp.tool_wrapper import _extract_text
+        from koko_pi_agent.mcp.tool_wrapper import _extract_text
 
         content = [mcp_types.ImageContent(type="image", data="...", mimeType="image/png")]
         assert "[image: image/png]" in _extract_text(content)
@@ -255,8 +255,8 @@ class TestExtractText:
 class TestMCPManagerPartialFailure:
     @pytest.mark.asyncio
     async def test_single_server_failure_does_not_block_others(self) -> None:
-        from mewcode.mcp.manager import MCPManager
-        from mewcode.tools import ToolRegistry
+        from koko_pi_agent.mcp.manager import MCPManager
+        from koko_pi_agent.tools import ToolRegistry
 
         good_config = MCPServerConfig(
             name="good",
@@ -273,7 +273,7 @@ class TestMCPManagerPartialFailure:
 
         registry = ToolRegistry()
 
-        with patch("mewcode.mcp.manager.MCPClient") as MockClient:
+        with patch("koko_pi_agent.mcp.manager.MCPClient") as MockClient:
             good_instance = AsyncMock()
             good_instance.is_alive = True
 
@@ -316,8 +316,8 @@ class _ServerTool:
 async def test_mcp_manager_tracks_provenance_and_unregisters_before_shutdown(
     monkeypatch,
 ) -> None:
-    from mewcode.mcp.manager import ConnectResult, MCPManager
-    from mewcode.tools import ContributionOwner, ToolRegistry
+    from koko_pi_agent.mcp.manager import ConnectResult, MCPManager
+    from koko_pi_agent.tools import ContributionOwner, ToolRegistry
 
     registry = ToolRegistry()
     registry.register(
@@ -355,8 +355,8 @@ async def test_mcp_manager_tracks_provenance_and_unregisters_before_shutdown(
 
 @pytest.mark.asyncio
 async def test_mcp_registration_conflict_rolls_back_current_batch(monkeypatch) -> None:
-    from mewcode.mcp.manager import ConnectResult, MCPManager
-    from mewcode.tools import ToolRegistry
+    from koko_pi_agent.mcp.manager import ConnectResult, MCPManager
+    from koko_pi_agent.tools import ToolRegistry
 
     registry = ToolRegistry()
     existing = _ServerTool("Existing", "legacy")
@@ -386,8 +386,8 @@ async def test_mcp_registration_conflict_rolls_back_current_batch(monkeypatch) -
 async def test_mcp_registration_conflict_does_not_block_later_server(
     monkeypatch,
 ) -> None:
-    from mewcode.mcp.manager import ConnectResult, MCPManager
-    from mewcode.tools import ToolRegistry
+    from koko_pi_agent.mcp.manager import ConnectResult, MCPManager
+    from koko_pi_agent.tools import ToolRegistry
 
     registry = ToolRegistry()
     original = _ServerTool("Existing", "builtin")

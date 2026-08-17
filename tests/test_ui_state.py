@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from mewcode.ui_state import UIStateStore
+from koko_pi_agent.ui_state import UIStateStore
 
 
 def test_mascot_open_state_round_trips_and_preserves_other_state(tmp_path) -> None:
@@ -39,6 +39,6 @@ def test_invalid_open_value_is_not_treated_as_enabled(tmp_path) -> None:
 def test_default_state_path_is_scoped_to_current_project(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     store = UIStateStore()
-    assert store.path == tmp_path / ".mewcode" / "ui_state.json"
+    assert store.path == tmp_path / ".koko" / "ui_state.json"
     assert store.set_mascot_open(True) is True
     assert store.path.exists()

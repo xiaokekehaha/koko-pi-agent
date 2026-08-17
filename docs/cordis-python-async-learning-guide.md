@@ -227,7 +227,7 @@ class MountedPlugin:
 | 文件热更新 | watchfiles | 监听代码或配置变化，触发重新协调 | 后期能力 |
 | 可观测性 | `logging`、结构化事件 | 追踪谁注册、谁依赖、为何启动或停止 | 生产化必需 |
 
-当前 `mewcode-python` 已要求 Python 3.11 以上，并已经依赖 PyYAML、Pydantic、pytest 和 pytest-asyncio，因此做教学版不需要先更换项目技术栈。
+当前 `koko` 已要求 Python 3.11 以上，并已经依赖 PyYAML、Pydantic、pytest 和 pytest-asyncio，因此做教学版不需要先更换项目技术栈。
 
 ### 3.2 `async` 到底解决什么
 

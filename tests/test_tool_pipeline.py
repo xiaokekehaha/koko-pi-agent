@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-from mewcode.permissions import Decision
-from mewcode.runtime import (
+from koko_pi_agent.permissions import Decision
+from koko_pi_agent.runtime import (
     CompletedAssistantMessage,
     RunCancellation,
     ToolBatchRequest,
@@ -16,8 +16,8 @@ from mewcode.runtime import (
     ToolPipeline,
     ToolResultEvent,
 )
-from mewcode.tools import ToolRegistry
-from mewcode.tools.base import Tool, ToolCallComplete, ToolResult
+from koko_pi_agent.tools import ToolRegistry
+from koko_pi_agent.tools.base import Tool, ToolCallComplete, ToolResult
 
 
 class _Params(BaseModel):

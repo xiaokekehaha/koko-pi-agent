@@ -76,13 +76,13 @@ Pi 的设计有时会被概括为“small core”。这里的 small 指核心承
 
 | 已有能力 | 当前位置 | 可以保留的价值 |
 | --- | --- | --- |
-| Agent Loop | `mewcode/agent.py` | 模型、工具、重试、压缩和事件循环已经存在，不应重写 |
-| Tool 注册表 | `mewcode/tools/__init__.py` | 已经把 Agent 与具体工具列表分开 |
-| Command 注册表 | `mewcode/commands/registry.py` | 已有命令和别名冲突检查 |
-| Hook 引擎 | `mewcode/hooks/engine.py` | 已有观察事件和工具前置拦截的雏形 |
-| Skill Loader | `mewcode/skills/loader.py` | 已有全局、项目和内置资源的加载顺序 |
-| Markdown Command Loader | `mewcode/commands/loader.py` | 已有声明式命令发现能力 |
-| CLI、Remote、队友模式 | `mewcode/__main__.py`、`mewcode/remote.py` | 已有多个入口，正好能检验统一 Runtime 是否有效 |
+| Agent Loop | `koko_pi_agent/agent.py` | 模型、工具、重试、压缩和事件循环已经存在，不应重写 |
+| Tool 注册表 | `koko_pi_agent/tools/__init__.py` | 已经把 Agent 与具体工具列表分开 |
+| Command 注册表 | `koko_pi_agent/commands/registry.py` | 已有命令和别名冲突检查 |
+| Hook 引擎 | `koko_pi_agent/hooks/engine.py` | 已有观察事件和工具前置拦截的雏形 |
+| Skill Loader | `koko_pi_agent/skills/loader.py` | 已有全局、项目和内置资源的加载顺序 |
+| Markdown Command Loader | `koko_pi_agent/commands/loader.py` | 已有声明式命令发现能力 |
+| CLI、Remote、队友模式 | `koko_pi_agent/__main__.py`、`koko_pi_agent/remote.py` | 已有多个入口，正好能检验统一 Runtime 是否有效 |
 
 所以这次设计的性质是“收拢和加固”，不是“推倒重来”。
 
@@ -371,7 +371,7 @@ ResourceLoader 只把不同来源转换为统一的扩展说明和静态资源�
 1. MewCode 内置扩展；
 2. Python 安装包入口点；
 3. 用户显式配置的本地路径；
-4. 已信任项目的 `.mewcode/extensions/`；
+4. 已信任项目的 `.koko/extensions/`；
 5. 命令行临时指定的扩展路径。
 
 外部 Python 包优先采用标准库 `importlib.metadata.entry_points()`，入口点组名规划为 `mewcode.extensions`。这样扩展可以正常打包、安装、查询版本和卸载，不需要 MewCode 手写一套包管理器。
@@ -736,7 +736,7 @@ sequenceDiagram
 | 0E | 依次迁移 TaskManager、AgentTool、Skill、teammate、TUI、Remote 和非交互入口 |
 | 0F | 删除重复 Loop、旧 Tool 路径和越过新 Interface 的浅测试 |
 
-预计新增 `mewcode/runtime/__init__.py`、`mewcode/runtime/events.py`、`mewcode/runtime/agent_loop.py`、`mewcode/runtime/tool_pipeline.py`、`tests/test_agent_runtime.py` 和 `tests/test_tool_pipeline.py`；现有调用方按 0A–0F 分批修改，不一次性铺开。
+预计新增 `koko_pi_agent/runtime/__init__.py`、`koko_pi_agent/runtime/events.py`、`koko_pi_agent/runtime/agent_loop.py`、`koko_pi_agent/runtime/tool_pipeline.py`、`tests/test_agent_runtime.py` 和 `tests/test_tool_pipeline.py`；现有调用方按 0A–0F 分批修改，不一次性铺开。
 
 阶段 0 验收：生产代码只有一个 Loop 和 Tool Pipeline；截断 Tool Call 执行次数为零；interactive/headless Conversation 一致；非并发安全 Tool 不重叠；取消后无 Run-owned task；第二个并发 Run 在 Agent 层失败。
 
@@ -748,7 +748,7 @@ sequenceDiagram
 
 阶段 1 详细盘点修正了初稿中的三个假设：
 
-- 真实 TUI 装配位于 `mewcode/app.py`，不能只迁移 `__main__.py` 和 Remote；
+- 真实 TUI 装配位于 `koko_pi_agent/app.py`，不能只迁移 `__main__.py` 和 Remote；
 - TUI、prompt、Remote 与 teammate 的 Tool 清单本来就不同，应使用显式 `ToolProfile` 保持名称与顺序，而不是强制清单相同；
 - sub-agent、fork 与 coordinator 当前复用父 Tool 对象，本阶段明确建模为 borrowed ToolView，不冒充独立 ExtensionSession。
 
@@ -789,7 +789,7 @@ sequenceDiagram
 - 统一自然文本、Tool 和 truncated recovery 的 `TurnComplete`；
 - TUI Enter/Alt+Enter 与 Remote 可选 delivery 字段接入同一 Core。
 
-实际新增 `mewcode/runtime/run_control.py` 与 `tests/test_run_control.py`，并修改 Runtime event/loop/facade、TUI、Remote 及相关 Adapter 测试；没有创建第二套 AgentLoop，也没有修改 Session schema。
+实际新增 `koko_pi_agent/runtime/run_control.py` 与 `tests/test_run_control.py`，并修改 Runtime event/loop/facade、TUI、Remote 及相关 Adapter 测试；没有创建第二套 AgentLoop，也没有修改 Session schema。
 
 阶段 2A 验收已通过：同一 gated scripted Agent 在 TUI/Remote 中得到一致的 Conversation 投影；运行中输入不丢失、不隐式取消，硬停止不误消费；TUI Session exactly-once、单 active run 与 ToolPipeline 行为均未回归。目标矩阵 `76 passed`；当前树全量 `693 passed, 1 skipped, 1` 个既有 warning；临时 detached worktree 隔离重放 Stage 1+2A 后为 `687 passed, 1 skipped, 1 warning`。
 
@@ -833,7 +833,7 @@ sequenceDiagram
 - 输出加载诊断和当前贡献来源；
 - 编写独立的扩展作者文档与测试扩展包。
 
-预计文件影响：新增 `mewcode/extensions/loader.py`、`tests/test_extension_loader.py` 和 `docs/extensions.md`，修改 `mewcode/extensions/contracts.py`、`mewcode/extensions/host.py`、`mewcode/config.py`、`mewcode/__main__.py` 和 `mewcode/remote.py`。
+预计文件影响：新增 `koko_pi_agent/extensions/loader.py`、`tests/test_extension_loader.py` 和 `docs/extensions.md`，修改 `koko_pi_agent/extensions/contracts.py`、`koko_pi_agent/extensions/host.py`、`koko_pi_agent/config.py`、`koko_pi_agent/__main__.py` 和 `koko_pi_agent/remote.py`。
 
 阶段 3 验收：安装测试扩展后能发现并激活；禁用后不加载；损坏扩展在 warn 模式下隔离、在 strict 模式下阻止启动。
 
@@ -845,11 +845,11 @@ sequenceDiagram
 
 - 支持用户显式配置路径和命令行临时路径；
 - 引入项目工作区信任记录；
-- 只有信任后才扫描和导入 `.mewcode/extensions/`；
+- 只有信任后才扫描和导入 `.koko/extensions/`；
 - 诊断中显示真实来源路径；
 - 不自动执行下载和安装。
 
-预计文件影响：新增 `mewcode/extensions/trust.py` 和 `tests/test_project_trust.py`，修改 `mewcode/extensions/loader.py`、`mewcode/config.py`、`mewcode/__main__.py`、`mewcode/remote.py`、`tests/test_extension_loader.py` 和 `docs/extensions.md`。信任决定保存在用户目录的独立记录中，绝不读取项目自身声明作为信任证据。
+预计文件影响：新增 `koko_pi_agent/extensions/trust.py` 和 `tests/test_project_trust.py`，修改 `koko_pi_agent/extensions/loader.py`、`koko_pi_agent/config.py`、`koko_pi_agent/__main__.py`、`koko_pi_agent/remote.py`、`tests/test_extension_loader.py` 和 `docs/extensions.md`。信任决定保存在用户目录的独立记录中，绝不读取项目自身声明作为信任证据。
 
 阶段 4 验收：未信任项目无法通过仓库文件执行 Python 扩展；拒绝信任后普通 Agent 功能仍可使用。
 
@@ -865,7 +865,7 @@ sequenceDiagram
 - 重载期间阻止新请求进入切换区；
 - 对仍在运行的 Agent Run 明确采用“等待完成”或“用户确认取消”，不强行中断未知外部副作用。
 
-预计文件影响：`mewcode/runtime/agent_runtime.py`、`mewcode/extensions/contracts.py`、`mewcode/extensions/host.py`、`mewcode/extensions/loader.py`、`mewcode/__main__.py`、`mewcode/remote.py`、`tests/test_extension_reload.py` 和 `tests/test_extensions.py`。
+预计文件影响：`koko_pi_agent/runtime/agent_runtime.py`、`koko_pi_agent/extensions/contracts.py`、`koko_pi_agent/extensions/host.py`、`koko_pi_agent/extensions/loader.py`、`koko_pi_agent/__main__.py`、`koko_pi_agent/remote.py`、`tests/test_extension_reload.py` 和 `tests/test_extensions.py`。
 
 阶段 5 验收：损坏的新扩展版本不会破坏正在工作的旧会话；成功切换后旧 Handle 无法影响新 Registry。
 

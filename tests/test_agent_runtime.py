@@ -8,11 +8,11 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from mewcode.agent import Agent
-from mewcode.client import LLMClient
-from mewcode.conversation import ConversationManager
-from mewcode.permissions import Decision, PermissionMode
-from mewcode.runtime import (
+from koko_pi_agent.agent import Agent
+from koko_pi_agent.client import LLMClient
+from koko_pi_agent.conversation import ConversationManager
+from koko_pi_agent.permissions import Decision, PermissionMode
+from koko_pi_agent.runtime import (
     HeadlessApprovalAdapter,
     InteractiveApprovalAdapter,
     RunFailed,
@@ -24,8 +24,8 @@ from mewcode.runtime import (
     RunStatus,
     TurnComplete,
 )
-from mewcode.tools import ToolRegistry
-from mewcode.tools.base import (
+from koko_pi_agent.tools import ToolRegistry
+from koko_pi_agent.tools.base import (
     StreamEnd,
     StreamEvent,
     TextDelta,

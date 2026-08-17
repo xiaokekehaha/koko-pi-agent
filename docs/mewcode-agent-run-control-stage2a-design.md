@@ -445,8 +445,8 @@ RunControl enqueue 不调用 EventSink，避免用户输入处理被当前事件
 
 文件：
 
-- 新增 `mewcode/runtime/run_control.py`；
-- 修改 `mewcode/runtime/events.py` 的共享合同；
+- 新增 `koko_pi_agent/runtime/run_control.py`；
+- 修改 `koko_pi_agent/runtime/events.py` 的共享合同；
 - 新增 `tests/test_run_control.py`（实现完成后）。
 
 步骤：
@@ -464,8 +464,8 @@ RunControl enqueue 不调用 EventSink，避免用户输入处理被当前事件
 
 文件：
 
-- 修改 `mewcode/runtime/agent_loop.py`；
-- 修改 `mewcode/agent.py`；
+- 修改 `koko_pi_agent/runtime/agent_loop.py`；
+- 修改 `koko_pi_agent/agent.py`；
 - 修改 `tests/test_agent_runtime.py`。
 
 步骤：
@@ -487,7 +487,7 @@ RunControl enqueue 不调用 EventSink，避免用户输入处理被当前事件
 
 文件：
 
-- 修改 `mewcode/runtime/agent_runtime.py`；
+- 修改 `koko_pi_agent/runtime/agent_runtime.py`；
 - 修改 `tests/test_runtime_composition.py` 与 `tests/test_agent_runtime.py`。
 
 步骤：
@@ -506,8 +506,8 @@ RunControl enqueue 不调用 EventSink，避免用户输入处理被当前事件
 
 文件：
 
-- 修改 `mewcode/app.py`；
-- 修改 `mewcode/remote.py`；
+- 修改 `koko_pi_agent/app.py`；
+- 修改 `koko_pi_agent/remote.py`；
 - 修改对应 Adapter 测试。
 
 步骤：
@@ -542,13 +542,13 @@ RunControl enqueue 不调用 EventSink，避免用户输入处理被当前事件
 
 | 文件 | 计划修改 | 理由 |
 | --- | --- | --- |
-| `mewcode/runtime/run_control.py` | 新增深 Module | 集中双队列、边界、封口和恢复 |
-| `mewcode/runtime/events.py` | 输入合同、RunResult、TurnComplete 信息 | 让可观察结果跨 Adapter 一致 |
-| `mewcode/runtime/agent_loop.py` | 两个固定 control seam、Turn 生命周期 | 保持唯一薄编排器 |
-| `mewcode/agent.py` | AgentRun 构造与兼容 facade | 不创建第二个 Loop |
-| `mewcode/runtime/agent_runtime.py` | active-run 输入 Interface | 保持入口只依赖 Runtime |
-| `mewcode/app.py` | Enter/Alt+Enter/cancel、显示、Session flush | 消除隐式取消 |
-| `mewcode/remote.py` | delivery 路由与 ack | 消除静默丢失 |
+| `koko_pi_agent/runtime/run_control.py` | 新增深 Module | 集中双队列、边界、封口和恢复 |
+| `koko_pi_agent/runtime/events.py` | 输入合同、RunResult、TurnComplete 信息 | 让可观察结果跨 Adapter 一致 |
+| `koko_pi_agent/runtime/agent_loop.py` | 两个固定 control seam、Turn 生命周期 | 保持唯一薄编排器 |
+| `koko_pi_agent/agent.py` | AgentRun 构造与兼容 facade | 不创建第二个 Loop |
+| `koko_pi_agent/runtime/agent_runtime.py` | active-run 输入 Interface | 保持入口只依赖 Runtime |
+| `koko_pi_agent/app.py` | Enter/Alt+Enter/cancel、显示、Session flush | 消除隐式取消 |
+| `koko_pi_agent/remote.py` | delivery 路由与 ack | 消除静默丢失 |
 | `tests/test_run_control.py` | 实现后的 Interface 测试 | 验证状态机而非私有容器 |
 | `tests/test_agent_runtime.py` | Loop/Conversation/Event 行为 | 验证真正纵向切片 |
 | TUI/Remote Adapter tests | 跨入口回归 | 验证用户可见行为一致 |

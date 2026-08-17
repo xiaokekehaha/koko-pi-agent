@@ -20,20 +20,20 @@ from pathlib import Path
 # 确保项目根目录在 sys.path 中
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mewcode.agents.loader import AgentLoader
-from mewcode.agents.tool_filter import (
+from koko_pi_agent.agents.loader import AgentLoader
+from koko_pi_agent.agents.tool_filter import (
     ALL_AGENT_DISALLOWED_TOOLS,
     ASYNC_AGENT_ALLOWED_TOOLS,
     resolve_agent_tools,
 )
-from mewcode.agents.fork import FORK_BOILERPLATE_TAG, ForkError, build_forked_messages
-from mewcode.agents.trace import TraceManager
-from mewcode.agents.task_manager import TaskManager
-from mewcode.agents.notification import format_task_notification, inject_task_notifications
-from mewcode.conversation import ConversationManager, ToolUseBlock
-from mewcode.tools import ToolRegistry
-from mewcode.tools.base import Tool, ToolResult
-from mewcode.config import load_config
+from koko_pi_agent.agents.fork import FORK_BOILERPLATE_TAG, ForkError, build_forked_messages
+from koko_pi_agent.agents.trace import TraceManager
+from koko_pi_agent.agents.task_manager import TaskManager
+from koko_pi_agent.agents.notification import format_task_notification, inject_task_notifications
+from koko_pi_agent.conversation import ConversationManager, ToolUseBlock
+from koko_pi_agent.tools import ToolRegistry
+from koko_pi_agent.tools.base import Tool, ToolResult
+from koko_pi_agent.config import load_config
 
 PASS = "\033[32m✓\033[0m"
 FAIL = "\033[31m✗\033[0m"
@@ -208,7 +208,7 @@ def verify_tool_filter(loader: AgentLoader):
         check("L3: 后台所有工具都在白名单中", True)
 
     # 白名单+黑名单组合
-    from mewcode.agents.parser import AgentDef
+    from koko_pi_agent.agents.parser import AgentDef
     combo = AgentDef(
         agent_type="combo",
         when_to_use="test",
@@ -364,7 +364,7 @@ async def verify_task_manager():
 # ---------------------------------------------------------------------------
 def verify_notification():
     print("\n== 6. task-notification 通知 ==")
-    from mewcode.agents.task_manager import BackgroundTask
+    from koko_pi_agent.agents.task_manager import BackgroundTask
 
     bg = BackgroundTask(
         id="abc123",
@@ -412,7 +412,7 @@ def verify_config():
 # ---------------------------------------------------------------------------
 def verify_permission():
     print("\n== 8. BYPASS 权限模式 ==")
-    from mewcode.permissions.modes import PermissionMode, mode_decide
+    from koko_pi_agent.permissions.modes import PermissionMode, mode_decide
 
     check("BYPASS 枚举值", PermissionMode.BYPASS.value == "bypassPermissions")
     check("BYPASS read=allow", mode_decide(PermissionMode.BYPASS, "read") == "allow")
@@ -424,7 +424,7 @@ def verify_permission():
 # ---------------------------------------------------------------------------
 def verify_agent_fields():
     print("\n== 9. Agent 扩展字段 ==")
-    from mewcode.agent import Agent
+    from koko_pi_agent.agent import Agent
     from unittest.mock import MagicMock
 
     agent = Agent(
@@ -444,7 +444,7 @@ def verify_agent_fields():
 # ---------------------------------------------------------------------------
 def verify_agent_tool():
     print("\n== 10. AgentTool 参数与 schema ==")
-    from mewcode.tools.agent_tool import AgentTool, AgentToolParams
+    from koko_pi_agent.tools.agent_tool import AgentTool, AgentToolParams
 
     params = AgentToolParams(
         prompt="探索项目结构",

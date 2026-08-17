@@ -3,13 +3,13 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 
-from mewcode.tools import (
+from koko_pi_agent.tools import (
     ContributionOwner,
     ToolConflictError,
     ToolRegistry,
     ToolView,
 )
-from mewcode.tools.base import Tool, ToolResult
+from koko_pi_agent.tools.base import Tool, ToolResult
 
 
 class _Params(BaseModel):

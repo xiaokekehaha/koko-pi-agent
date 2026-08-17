@@ -40,7 +40,7 @@
 
 ### 3.1 Stage 1 已经有正确 seam，但 Implementation 还浅
 
-`mewcode/extensions/host.py` 已经为每个 ExtensionDefinition 创建独立 `AsyncExitStack`，然后把 extension scope 反向压入 session scope。
+`koko_pi_agent/extensions/host.py` 已经为每个 ExtensionDefinition 创建独立 `AsyncExitStack`，然后把 extension scope 反向压入 session scope。
 
 这已经证明：
 
@@ -73,7 +73,7 @@ TUI、Remote 和 external teammate 当前都是：
 
 ### 3.3 TUI stale-cleanup 是真实的长生命周期任务
 
-`mewcode/app.py` 当前直接 `asyncio.create_task(start_stale_cleanup_task(...))`：
+`koko_pi_agent/app.py` 当前直接 `asyncio.create_task(start_stale_cleanup_task(...))`：
 
 - provider 切换时只 cancel，没有 await；
 - App 退出时只 cancel，没有确认任务结束；
@@ -84,7 +84,7 @@ TUI、Remote 和 external teammate 当前都是：
 
 ### 3.4 TaskManager 不是本阶段的 TaskSupervisor
 
-`mewcode/agents/task_manager.py` 管理的是用户可见后台 Agent 作业，包含结果、token、mailbox、通知和业务状态。
+`koko_pi_agent/agents/task_manager.py` 管理的是用户可见后台 Agent 作业，包含结果、token、mailbox、通知和业务状态。
 
 TaskSupervisor 管理的是扩展拥有的协程生命周期，只关心：
 
@@ -466,9 +466,9 @@ provider 切换和 App 退出只关闭 Runtime；TaskSupervisor 负责 cancel、
 
 文件：
 
-- 新增 `mewcode/extensions/resources.py`；
-- 修改 `mewcode/extensions/contracts.py`；
-- 修改 `mewcode/extensions/__init__.py`；
+- 新增 `koko_pi_agent/extensions/resources.py`；
+- 修改 `koko_pi_agent/extensions/contracts.py`；
+- 修改 `koko_pi_agent/extensions/__init__.py`；
 - 实现完成后新增 `tests/test_extension_resources.py`。
 
 步骤：
@@ -485,9 +485,9 @@ provider 切换和 App 退出只关闭 Runtime；TaskSupervisor 负责 cancel、
 
 文件：
 
-- `mewcode/extensions/host.py`；
-- `mewcode/runtime/agent_runtime.py`；
-- 必要时 `mewcode/runtime/__init__.py`；
+- `koko_pi_agent/extensions/host.py`；
+- `koko_pi_agent/runtime/agent_runtime.py`；
+- 必要时 `koko_pi_agent/runtime/__init__.py`；
 - 实现后更新 `tests/test_extensions.py`、`tests/test_runtime_composition.py`。
 
 步骤：
@@ -507,7 +507,7 @@ provider 切换和 App 退出只关闭 Runtime；TaskSupervisor 负责 cancel、
 
 文件：
 
-- `mewcode/extensions/builtins.py`；
+- `koko_pi_agent/extensions/builtins.py`；
 - 实现后更新 `tests/test_runtime_composition.py`。
 
 步骤：
@@ -525,10 +525,10 @@ provider 切换和 App 退出只关闭 Runtime；TaskSupervisor 负责 cancel、
 
 文件：
 
-- `mewcode/app.py`；
-- `mewcode/remote.py`；
-- `mewcode/__main__.py`；
-- 必要时最小修改 `mewcode/mcp/manager.py`；
+- `koko_pi_agent/app.py`；
+- `koko_pi_agent/remote.py`；
+- `koko_pi_agent/__main__.py`；
+- 必要时最小修改 `koko_pi_agent/mcp/manager.py`；
 - 实现后更新 TUI/Remote/teammate/MCP 入口测试。
 
 步骤：
@@ -561,15 +561,15 @@ provider 切换和 App 退出只关闭 Runtime；TaskSupervisor 负责 cancel、
 
 | 文件 | 修改 | 理由 |
 | --- | --- | --- |
-| `mewcode/extensions/resources.py` | 新深 Module | 隐藏任务、资源、顺序、超时和诊断复杂度 |
-| `mewcode/extensions/contracts.py` | profile/task/error/diagnostic contracts | 让生命周期事实类型化 |
-| `mewcode/extensions/host.py` | API 与 ResourceScope 集成 | 保持唯一激活/回滚/关闭 seam |
-| `mewcode/extensions/builtins.py` | runtime-resources Definition | 接入真实 Adapter |
-| `mewcode/runtime/agent_runtime.py` | 实时诊断、关闭聚合 | 让 post-activation failure 可见 |
-| `mewcode/app.py` | MCP pre-owner、stale task 迁移 | 删除 TUI 直接资源 owner |
-| `mewcode/remote.py` | MCP pre-owner | 修复连接失败窗口 |
-| `mewcode/__main__.py` | teammate MCP pre-owner | 统一 external teammate 生命周期 |
-| `mewcode/mcp/manager.py` | 仅必要的幂等/诊断兼容 | 不移动连接业务逻辑 |
+| `koko_pi_agent/extensions/resources.py` | 新深 Module | 隐藏任务、资源、顺序、超时和诊断复杂度 |
+| `koko_pi_agent/extensions/contracts.py` | profile/task/error/diagnostic contracts | 让生命周期事实类型化 |
+| `koko_pi_agent/extensions/host.py` | API 与 ResourceScope 集成 | 保持唯一激活/回滚/关闭 seam |
+| `koko_pi_agent/extensions/builtins.py` | runtime-resources Definition | 接入真实 Adapter |
+| `koko_pi_agent/runtime/agent_runtime.py` | 实时诊断、关闭聚合 | 让 post-activation failure 可见 |
+| `koko_pi_agent/app.py` | MCP pre-owner、stale task 迁移 | 删除 TUI 直接资源 owner |
+| `koko_pi_agent/remote.py` | MCP pre-owner | 修复连接失败窗口 |
+| `koko_pi_agent/__main__.py` | teammate MCP pre-owner | 统一 external teammate 生命周期 |
+| `koko_pi_agent/mcp/manager.py` | 仅必要的幂等/诊断兼容 | 不移动连接业务逻辑 |
 | `tests/test_extension_resources.py` | 实现后 Interface 验证 | 只跨公开 seam 测行为 |
 | 现有 Runtime/入口测试 | 实现后回归更新 | 验证真实 Adapter 和兼容性 |
 
@@ -656,4 +656,4 @@ git diff --check
 
 ## 18. 当前结果
 
-阶段 2A 已完成范围选择、Interface、生命周期、Adapter、分批实施和验证设计。本轮没有修改 `mewcode/` 生产代码或测试代码。
+阶段 2A 已完成范围选择、Interface、生命周期、Adapter、分批实施和验证设计。本轮没有修改 `koko_pi_agent/` 生产代码或测试代码。
