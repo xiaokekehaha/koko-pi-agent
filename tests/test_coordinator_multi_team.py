@@ -1,7 +1,5 @@
-# 来源：公众号@小林coding
-# 后端八股网站：xiaolincoding.com
-# Agent网站：xiaolinnote.com
-# 简历模版：jianli.xiaolinnote.com
+# Koko Pi Agent
+# 项目地址：https://github.com/xiaokekehaha/koko-pi-agent
 
 # 回归测试：Coordinator Mode 的工具限制在多 Team 场景下保持稳定。
 # 模式由配置在启动时决定，建团队和拆团队都不改变工具集，

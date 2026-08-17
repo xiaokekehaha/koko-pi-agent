@@ -1,7 +1,5 @@
-# 来源：公众号@小林coding
-# 后端八股网站：xiaolincoding.com
-# Agent网站：xiaolinnote.com
-# 简历模版：jianli.xiaolinnote.com
+# Koko Pi Agent
+# 项目地址：https://github.com/xiaokekehaha/koko-pi-agent
 
 """Hook 系统的测试 —— 涵盖事件、条件、执行器、引擎、加载器以及与 agent 的集成。"""
 from __future__ import annotations

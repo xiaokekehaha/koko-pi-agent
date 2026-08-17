@@ -1,7 +1,5 @@
-# 来源：公众号@小林coding
-# 后端八股网站：xiaolincoding.com
-# Agent网站：xiaolinnote.com
-# 简历模版：jianli.xiaolinnote.com
+# Koko Pi Agent
+# 项目地址：https://github.com/xiaokekehaha/koko-pi-agent
 """针对各 provider 序列化构建器的单元测试。
 
 会话层与具体 provider 无关；序列化逻辑位于 koko_pi_agent.serialization。

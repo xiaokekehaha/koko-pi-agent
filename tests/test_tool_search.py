@@ -1,7 +1,5 @@
-# 来源：公众号@小林coding
-# 后端八股网站：xiaolincoding.com
-# Agent网站：xiaolinnote.com
-# 简历模版：jianli.xiaolinnote.com
+# Koko Pi Agent
+# 项目地址：https://github.com/xiaokekehaha/koko-pi-agent
 
 """针对延迟加载（Deferred Loading）/ ToolSearch 机制的测试。"""
 

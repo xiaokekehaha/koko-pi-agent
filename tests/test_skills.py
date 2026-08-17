@@ -1,7 +1,5 @@
-# 来源：公众号@小林coding
-# 后端八股网站：xiaolincoding.com
-# Agent网站：xiaolinnote.com
-# 简历模版：jianli.xiaolinnote.com
+# Koko Pi Agent
+# 项目地址：https://github.com/xiaokekehaha/koko-pi-agent
 
 """Skill 系统的测试 —— 包括 parser、loader、executor 以及 LoadSkill 工具。"""
 from __future__ import annotations

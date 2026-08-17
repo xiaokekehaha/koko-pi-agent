@@ -1,7 +1,5 @@
-# 来源：公众号@小林coding
-# 后端八股网站：xiaolincoding.com
-# Agent网站：xiaolinnote.com
-# 简历模版：jianli.xiaolinnote.com
+# Koko Pi Agent
+# 项目地址：https://github.com/xiaokekehaha/koko-pi-agent
 
 """工具结果预算在 Agent 主循环里的接线测试：驱动完整主循环，
 验证单条溢写、聚合溢写、回读豁免，以及进入对话历史的内容就是最终形态。"""
