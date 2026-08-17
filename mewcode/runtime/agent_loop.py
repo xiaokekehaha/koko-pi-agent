@@ -25,26 +25,17 @@ from mewcode.runtime.events import (
     TurnStarted,
     UsageEvent,
 )
-from mewcode.runtime.agent_run import (  # noqa: F401 - compatibility re-exports
-    AgentRun,
+from mewcode.runtime.agent_run import (
     RunCancellation,
     RunRequest,
-    RunStatus,
     finalize_run_result,
 )
-from mewcode.runtime.model_stream import (  # noqa: F401 - compatibility re-export
-    LLMResponse,
-    StreamCollector,
-    ThinkingBlock,
-)
+from mewcode.runtime.model_stream import LLMResponse, StreamCollector
 from mewcode.runtime.run_control import (
     HardStopReason,
     QueuedRunInput,
     RunControl,
     TurnDirective,
-)
-from mewcode.runtime.streaming_adapter import (  # noqa: F401 - compatibility re-export
-    StreamingEventAdapter,
 )
 from mewcode.runtime.tool_pipeline import (
     ApprovalAdapter,
@@ -85,10 +76,24 @@ class _RunContext:
 class _ModelTurn:
     """Provider response plus the two projections derived from it."""
 
-    number: int
     response: LLMResponse
     thinking_blocks: list[ConvThinkingBlock]
     completed: CompletedAssistantMessage
+
+    @classmethod
+    def from_response(cls, response: LLMResponse) -> _ModelTurn:
+        return cls(
+            response=response,
+            thinking_blocks=[
+                ConvThinkingBlock(thinking=block.thinking, signature=block.signature)
+                for block in response.thinking_blocks
+            ],
+            completed=CompletedAssistantMessage(
+                text=response.text,
+                tool_calls=tuple(response.tool_calls),
+                stop_reason=response.stop_reason,
+            ),
+        )
 
 
 class AgentLoop:
@@ -103,6 +108,12 @@ class AgentLoop:
             hook_engine=agent.hook_engine,
             recovery_state=agent.recovery_state,
         )
+        # One AgentLoop drives exactly one run, so run state lives on the loop
+        # and is readable from run()'s failure handlers no matter how early a
+        # run dies.
+        self._turn = 0
+        self._last_text = ""
+        self._session_started = False
 
     async def run(
         self,
@@ -113,7 +124,6 @@ class AgentLoop:
         control: RunControl,
     ) -> RunResult:
         await emit(RunStarted(run_id=run_id))
-        self._session_started = False
         failure_messages: list[str] = []
         try:
             result = await self._run_loop(request, emit, cancellation, control)
@@ -121,8 +131,8 @@ class AgentLoop:
             control.seal("cancelled")
             result = RunResult(
                 status="cancelled",
-                turns=getattr(self, "_turn", 0),
-                final_text=getattr(self, "_last_text", ""),
+                turns=self._turn,
+                final_text=self._last_text,
             )
         except Exception as exc:
             log.exception("Agent run failed")
@@ -130,8 +140,8 @@ class AgentLoop:
             failure_messages.append(str(exc))
             result = RunResult(
                 status="failed",
-                turns=getattr(self, "_turn", 0),
-                final_text=getattr(self, "_last_text", ""),
+                turns=self._turn,
+                final_text=self._last_text,
                 error=str(exc),
             )
 
@@ -185,9 +195,8 @@ class AgentLoop:
         while True:
             cancellation.raise_if_cancelled()
             self._turn += 1
-            turn = await self._stream_turn(context, self._turn)
+            turn = await self._stream_turn(context)
 
-            # A None result means RunControl selected another turn.
             if turn.completed.is_truncated:
                 result = await self._complete_truncated_response(
                     context,
@@ -201,6 +210,7 @@ class AgentLoop:
                 else:
                     result = await self._complete_natural_response(context, turn)
 
+            # A None result means RunControl selected another turn.
             if result is not None:
                 return result
 
@@ -226,28 +236,21 @@ class AgentLoop:
 
         await agent._run_hook("session_start", emit)
         self._session_started = True
-
-        self._turn = 0
-        self._last_text = ""
         return conversation, turn_preparer
 
-    async def _stream_turn(
-        self,
-        context: _RunContext,
-        iteration: int,
-    ) -> _ModelTurn:
+    async def _stream_turn(self, context: _RunContext) -> _ModelTurn:
         agent = self._agent
-        await context.emit(TurnStarted(turn=iteration))
+        await context.emit(TurnStarted(turn=self._turn))
         await agent._run_hook("turn_start", context.emit)
         prepared_call = await context.turn_preparer.prepare(
             context.conversation,
-            iteration,
+            self._turn,
             context.emit,
             context.cancellation,
         )
 
         collector = StreamCollector()
-        await context.emit(MessageStarted(turn=iteration))
+        await context.emit(MessageStarted(turn=self._turn))
         stream = agent.client.stream(
             context.conversation,
             system=prepared_call.system_prompt,
@@ -260,7 +263,7 @@ class AgentLoop:
         response = collector.response
         await context.emit(
             MessageFinished(
-                turn=iteration,
+                turn=self._turn,
                 text=response.text,
                 stop_reason=response.stop_reason,
             )
@@ -276,27 +279,7 @@ class AgentLoop:
                 output_tokens=agent.total_output_tokens,
             )
         )
-        return self._model_turn(iteration, response)
-
-    @staticmethod
-    def _model_turn(
-        iteration: int,
-        response: LLMResponse,
-    ) -> _ModelTurn:
-        thinking_blocks = [
-            ConvThinkingBlock(thinking=block.thinking, signature=block.signature)
-            for block in response.thinking_blocks
-        ]
-        return _ModelTurn(
-            number=iteration,
-            response=response,
-            thinking_blocks=thinking_blocks,
-            completed=CompletedAssistantMessage(
-                text=response.text,
-                tool_calls=tuple(response.tool_calls),
-                stop_reason=response.stop_reason,
-            ),
-        )
+        return _ModelTurn.from_response(response)
 
     async def _complete_truncated_response(
         self,
@@ -308,17 +291,16 @@ class AgentLoop:
         retry = self._next_output_retry(recovery)
         await self._agent._run_hook("turn_end", context.emit)
         if retry is None:
-            return await self._output_recovery_failed(context, turn.number)
+            return await self._output_recovery_failed(context)
 
         retry_message, retry_event = retry
         directive = await self._decide_turn(
             context,
-            turn.number,
             would_stop=False,
             continue_reason="retry",
         )
         if not directive.continue_run:
-            return await self._max_turn_result(context, turn.number)
+            return await self._max_turn_result(context)
 
         # The recovery prompt must precede user steering in Conversation.  This
         # keeps the partial assistant response paired with its own continuation.
@@ -331,16 +313,13 @@ class AgentLoop:
         self,
         recovery: _OutputRecoveryState,
     ) -> tuple[str, RetryEvent] | None:
-        resume_prompt = (
-            "Output token limit hit. Resume directly from where you stopped. "
-        )
         if not recovery.max_tokens_escalated:
             self._agent.client.set_max_output_tokens(MAX_TOKENS_CEILING)
             recovery.max_tokens_escalated = True
             return (
-                resume_prompt
-                + "Do not apologize or repeat previous content. "
-                + "Pick up mid-thought if needed.",
+                "Output token limit hit. Resume directly from where you stopped. "
+                "Do not apologize or repeat previous content. "
+                "Pick up mid-thought if needed.",
                 RetryEvent(reason="max_tokens escalation"),
             )
         if recovery.attempts >= MAX_OUTPUT_TOKENS_RECOVERIES:
@@ -348,7 +327,8 @@ class AgentLoop:
 
         recovery.attempts += 1
         return (
-            resume_prompt + "Break remaining work into smaller pieces.",
+            "Output token limit hit. Resume directly from where you stopped. "
+            "Break remaining work into smaller pieces.",
             RetryEvent(
                 reason=(
                     "max_tokens recovery "
@@ -357,24 +337,10 @@ class AgentLoop:
             ),
         )
 
-    async def _output_recovery_failed(
-        self,
-        context: _RunContext,
-        iteration: int,
-    ) -> RunResult:
+    async def _output_recovery_failed(self, context: _RunContext) -> RunResult:
         message = "Output token limit recovery exhausted"
-        await self._decide_turn(
-            context,
-            iteration,
-            would_stop=False,
-            hard_stop="failed",
-        )
-        return await self._terminal_result(
-            context,
-            status="failed",
-            iteration=iteration,
-            error=message,
-        )
+        await self._decide_turn(context, would_stop=False, hard_stop="failed")
+        return await self._terminal_result(context, status="failed", error=message)
 
     async def _complete_natural_response(
         self,
@@ -383,13 +349,9 @@ class AgentLoop:
     ) -> RunResult | None:
         self._append_assistant_message(context.conversation, turn)
         self._record_usage_anchor(context.conversation, turn.response)
-        await self._finish_natural_turn(context, turn.response.text)
-        directive = await self._finish_turn(
-            context,
-            turn.number,
-            would_stop=True,
-        )
-        return await self._resolve_turn_directive(context, directive, turn.number)
+        await self._finish_natural_turn(context, turn)
+        directive = await self._finish_turn(context, would_stop=True)
+        return await self._resolve_turn_directive(context, directive)
 
     async def _complete_tool_response(
         self,
@@ -404,11 +366,10 @@ class AgentLoop:
         await self._agent._run_hook("turn_end", context.emit)
         directive = await self._finish_turn(
             context,
-            turn.number,
             would_stop=False,
             hard_stop="terminate" if batch.terminate else None,
         )
-        return await self._resolve_turn_directive(context, directive, turn.number)
+        return await self._resolve_turn_directive(context, directive)
 
     async def _execute_tool_batch(
         self,
@@ -460,24 +421,12 @@ class AgentLoop:
         self,
         context: _RunContext,
         directive: TurnDirective,
-        iteration: int,
     ) -> RunResult | None:
         if directive.continue_run:
             return None
         if directive.reason == "max_turns":
-            return await self._max_turn_result(context, iteration)
-        return await self._completed_result(context, iteration)
-
-    async def _completed_result(
-        self,
-        context: _RunContext,
-        iteration: int,
-    ) -> RunResult:
-        return await self._terminal_result(
-            context,
-            status="completed",
-            iteration=iteration,
-        )
+            return await self._max_turn_result(context)
+        return await self._terminal_result(context, status="completed")
 
     @staticmethod
     async def _discard_event(_event: AgentEvent) -> None:
@@ -486,18 +435,14 @@ class AgentLoop:
     async def _finish_turn(
         self,
         context: _RunContext,
-        iteration: int,
         *,
         would_stop: bool,
         hard_stop: HardStopReason | None = None,
-        continue_reason: Literal["tool_calls", "retry"] = "tool_calls",
     ) -> TurnDirective:
         directive = await self._decide_turn(
             context,
-            iteration,
             would_stop=would_stop,
             hard_stop=hard_stop,
-            continue_reason=continue_reason,
         )
         await self._deliver_inputs(context, directive.deliveries)
         return directive
@@ -505,7 +450,6 @@ class AgentLoop:
     async def _decide_turn(
         self,
         context: _RunContext,
-        iteration: int,
         *,
         would_stop: bool,
         hard_stop: HardStopReason | None = None,
@@ -513,37 +457,28 @@ class AgentLoop:
     ) -> TurnDirective:
         """Ask RunControl once, then publish the canonical turn boundary."""
 
+        max_iterations = self._agent.max_iterations
         directive = context.control.after_turn(
             would_stop=would_stop,
             hard_stop=hard_stop,
-            continuation_allowed=self._continuation_allowed(iteration),
+            continuation_allowed=max_iterations <= 0 or self._turn < max_iterations,
             continue_reason=continue_reason,
         )
         await context.emit(
             TurnComplete(
-                turn=iteration,
+                turn=self._turn,
                 will_continue=directive.continue_run,
                 reason=directive.reason,
             )
         )
         return directive
 
-    def _continuation_allowed(self, iteration: int) -> bool:
+    async def _max_turn_result(self, context: _RunContext) -> RunResult:
         max_iterations = self._agent.max_iterations
-        return max_iterations <= 0 or iteration < max_iterations
-
-    async def _max_turn_result(
-        self,
-        context: _RunContext,
-        iteration: int,
-    ) -> RunResult:
-        max_iterations = self._agent.max_iterations
-        message = f"Agent reached maximum iterations ({max_iterations})"
         return await self._terminal_result(
             context,
             status="max_turns",
-            iteration=iteration,
-            error=message,
+            error=f"Agent reached maximum iterations ({max_iterations})",
         )
 
     async def _terminal_result(
@@ -551,17 +486,16 @@ class AgentLoop:
         context: _RunContext,
         *,
         status: Literal["completed", "failed", "max_turns"],
-        iteration: int,
         error: str = "",
     ) -> RunResult:
         """Emit terminal loop events in one place so adapters see one ordering."""
 
         if error:
             await context.emit(ErrorEvent(message=error))
-        await context.emit(LoopComplete(total_turns=iteration))
+        await context.emit(LoopComplete(total_turns=self._turn))
         return RunResult(
             status=status,
-            turns=iteration,
+            turns=self._turn,
             final_text=self._last_text,
             error=error,
         )
@@ -634,7 +568,7 @@ class AgentLoop:
     async def _finish_natural_turn(
         self,
         context: _RunContext,
-        text: str,
+        turn: _ModelTurn,
     ) -> None:
         agent = self._agent
         agent._loop_count += 1
@@ -648,10 +582,9 @@ class AgentLoop:
             )
         await agent._run_hook("turn_end", context.emit)
         if agent.file_history is not None:
+            text = turn.response.text
             summary = text[:60] + "..." if len(text) > 60 else text
-            agent.file_history.make_snapshot(
-                len(context.conversation.history), summary
-            )
+            agent.file_history.make_snapshot(len(context.conversation.history), summary)
 
     @staticmethod
     def _record_usage_anchor(

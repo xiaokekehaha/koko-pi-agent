@@ -129,30 +129,37 @@ class AgentRuntime:
                 if active_run is not None:
                     await active_run.wait_until_idle()
             finally:
-                try:
-                    visible_registry = getattr(self._agent, "registry", None)
-                    if isinstance(visible_registry, ToolView):
-                        visible_registry.close()
-                        self._agent.registry = self._registry
-                    await self._session.aclose()
-                finally:
-                    for contribution in self._registry.list_contributions():
-                        self._diagnostics.append(
-                            ExtensionDiagnostic(
-                                extension_id=contribution.owner.extension_id,
-                                source=contribution.owner.source,
-                                status="leaked",
-                                error=(
-                                    f"Tool '{contribution.name}' remained registered "
-                                    "after AgentRuntime close"
-                                ),
-                            )
-                        )
-                    self._state = "closed"
+                await self._release_extensions()
+
+    async def _release_extensions(self) -> None:
+        """Tear down the extension session, reaching 'closed' whatever happens."""
+
+        try:
+            visible_registry = getattr(self._agent, "registry", None)
+            if isinstance(visible_registry, ToolView):
+                visible_registry.close()
+                self._agent.registry = self._registry
+            await self._session.aclose()
+        finally:
+            self._record_leaked_contributions()
+            self._state = "closed"
+
+    def _record_leaked_contributions(self) -> None:
+        for contribution in self._registry.list_contributions():
+            self._diagnostics.append(
+                ExtensionDiagnostic(
+                    extension_id=contribution.owner.extension_id,
+                    source=contribution.owner.source,
+                    status="leaked",
+                    error=(
+                        f"Tool '{contribution.name}' remained registered "
+                        "after AgentRuntime close"
+                    ),
+                )
+            )
 
     async def __aenter__(self) -> AgentRuntime:
-        if self._state != "active":
-            raise RuntimeError(f"AgentRuntime is {self._state}")
+        self._ensure_active()
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
