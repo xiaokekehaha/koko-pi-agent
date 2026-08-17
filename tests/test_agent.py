@@ -94,7 +94,7 @@ async def test_single_step_tool_call():
         # 第 1 轮：模型调用 ReadFile
         [
             TextDelta("Let me read the file."),
-            ToolCallComplete("t1", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t1", "ReadFile", {"file_path": "KOKO.md"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=20),
         ],
         # 第 2 轮：模型给出最终答案
@@ -106,7 +106,7 @@ async def test_single_step_tool_call():
     registry = create_default_registry()
     agent = Agent(client, registry, "anthropic", work_dir=".")
     conv = ConversationManager()
-    conv.add_user_message("Read MEWCODE.md")
+    conv.add_user_message("Read KOKO.md")
 
     events = []
     async for e in agent.run(conv):
@@ -206,7 +206,7 @@ async def test_stop_max_iterations():
     for i in range(5):
         responses.append([
             TextDelta(f"Step {i}"),
-            ToolCallComplete(f"t{i}", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete(f"t{i}", "ReadFile", {"file_path": "KOKO.md"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=10),
         ])
 
@@ -243,7 +243,7 @@ async def test_stop_cancel():
             await asyncio.sleep(0.01)
             yield TextDelta(f"Step {self._call_count}")
             await asyncio.sleep(0.01)
-            yield ToolCallComplete(f"t{self._call_count}", "ReadFile", {"file_path": "MEWCODE.md"})
+            yield ToolCallComplete(f"t{self._call_count}", "ReadFile", {"file_path": "KOKO.md"})
             await asyncio.sleep(0.01)
             yield StreamEnd("end_turn", input_tokens=10, output_tokens=10)
 
@@ -311,7 +311,7 @@ async def test_message_splicing():
         # 第 1 轮：一个响应里包含两次工具调用
         [
             TextDelta("Reading two files."),
-            ToolCallComplete("t1", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t1", "ReadFile", {"file_path": "KOKO.md"}),
             ToolCallComplete("t2", "ReadFile", {"file_path": "pyproject.toml"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=20),
         ],
@@ -348,7 +348,7 @@ async def test_concurrent_batch_execution():
     """多个 ReadFile 调用并发执行（属于同一批次）。"""
     client = MockLLMClient([
         [
-            ToolCallComplete("t1", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t1", "ReadFile", {"file_path": "KOKO.md"}),
             ToolCallComplete("t2", "ReadFile", {"file_path": "pyproject.toml"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=20),
         ],
@@ -377,12 +377,12 @@ async def test_token_usage_accumulates():
     client = MockLLMClient([
         [
             TextDelta("Step 1"),
-            ToolCallComplete("t1", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t1", "ReadFile", {"file_path": "KOKO.md"}),
             StreamEnd("end_turn", input_tokens=100, output_tokens=50),
         ],
         [
             TextDelta("Step 2"),
-            ToolCallComplete("t2", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t2", "ReadFile", {"file_path": "KOKO.md"}),
             StreamEnd("end_turn", input_tokens=200, output_tokens=80),
         ],
         [

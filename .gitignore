@@ -23,3 +23,5 @@ example-*.md
 
 # Playwright MCP 运行日志
 .playwright-mcp/
+.planning/*
+.planning/.active_plan

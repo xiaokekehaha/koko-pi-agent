@@ -35,7 +35,7 @@ from koko_pi_agent.memory.session import (
 )
 
 # =========================================================================
-# A. 指令文件（MEWCODE.md）
+# A. 指令文件（KOKO.md）
 # =========================================================================
 
 class TestProcessIncludes:
@@ -115,18 +115,18 @@ class TestProcessIncludes:
 
 class TestLoadInstructions:
     def test_single_layer(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        mewcode_md = tmp_path / "MEWCODE.md"
-        mewcode_md.write_text("project instructions", encoding="utf-8")
+        koko_md = tmp_path / "KOKO.md"
+        koko_md.write_text("project instructions", encoding="utf-8")
         result = load_instructions(str(tmp_path))
         assert "project instructions" in result
 
     def test_multi_layer_priority(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """发现顺序：MEWCODE.md 在前，.koko/INSTRUCTIONS.md（legacy）在后。"""
-        root_md = tmp_path / "MEWCODE.md"
+        """发现顺序：KOKO.md 在前，.koko/INSTRUCTIONS.md（legacy）在后。"""
+        root_md = tmp_path / "KOKO.md"
         root_md.write_text("root level", encoding="utf-8")
         dotdir = tmp_path / ".koko"
         dotdir.mkdir()
-        # 不发现 .koko/MEWCODE.md，只发现 .koko/INSTRUCTIONS.md（legacy）
+        # 不发现 .koko/KOKO.md，只发现 .koko/INSTRUCTIONS.md（legacy）
         legacy_md = dotdir / "INSTRUCTIONS.md"
         legacy_md.write_text("legacy level", encoding="utf-8")
         result = load_instructions(str(tmp_path))
