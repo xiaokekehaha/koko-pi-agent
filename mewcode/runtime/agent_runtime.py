@@ -89,33 +89,33 @@ class AgentRuntime:
         return self._state
 
     def start_run(self, *args: Any, **kwargs: Any) -> Any:
-        if self._state != "active":
-            raise RuntimeError(f"AgentRuntime is {self._state}")
+        self._ensure_active()
         return self._agent.start_run(*args, **kwargs)
 
     def steer_active_run(self, text: str) -> RunInputReceipt | None:
-        if self._state != "active":
-            raise RuntimeError(f"AgentRuntime is {self._state}")
+        self._ensure_active()
         active_run = self._agent.active_run
         if active_run is None:
             return None
         return active_run.steer(text)
 
     def follow_up_active_run(self, text: str) -> RunInputReceipt | None:
-        if self._state != "active":
-            raise RuntimeError(f"AgentRuntime is {self._state}")
+        self._ensure_active()
         active_run = self._agent.active_run
         if active_run is None:
             return None
         return active_run.follow_up(text)
 
     def cancel_active_run(self) -> bool:
-        if self._state != "active":
-            raise RuntimeError(f"AgentRuntime is {self._state}")
+        self._ensure_active()
         if self._agent.active_run is None:
             return False
         self._agent.cancel_active_run()
         return True
+
+    def _ensure_active(self) -> None:
+        if self._state != "active":
+            raise RuntimeError(f"AgentRuntime is {self._state}")
 
     async def aclose(self) -> None:
         async with self._close_lock:

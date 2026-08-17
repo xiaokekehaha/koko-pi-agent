@@ -45,3 +45,582 @@ _**Agent (gpt-5.6-sol 2026-08-16 14:13:32Z)**_
 _**Agent (gpt-5.6-sol 2026-08-16 14:13:34Z)**_
 
 当前工作区里已经有一组未提交的 runtime 改动，而且正好覆盖 `agent_loop.py`、`turn_preparer.py`，并新增了 `agent_run.py`、`model_stream.py`、`streaming_adapter.py`。我会把这些现有改动当作待整理的基线，只做增量简化，不回退或覆盖它们；先通过 diff 和相关测试确认这次拆分后的真实行为。
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:13:41Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"sed -n '1,240p' /Users/xiaokezhou/.codex/skills/simplify/SKILL.md","workdir":"/Users/xiaokezhou/workspace/mewcode-python","yield_time_m
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:13:49Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Investigating git diff discrepancies**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:13:57Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"git status --porcelain=v2 && git diff --raw && git ls-files -v mewcode/agent.py mewcode/runtime/__init__.py mewcode/runtime/agent_loop.
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:03Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Inspecting agent_loop status inconsistencies**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:05Z)**_
+
+从当前结构看，`agent_loop.py` 已经达到 673 行，主要复杂度不在单个算法，而在“流式响应、会话生命周期、截断恢复、工具执行、运行中输入”五类职责交织。现有设计明确要求 `AgentLoop` 保持唯一编排器，所以我不会再拆出新框架；先跑覆盖这些边界的测试，之后优先减少重复参数传递和重复的 Turn 收尾分支。
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:07Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({"cmd":"uv run pytest -q tests/test_agent_runtime.py tests/test_run_control.py tests/test_turn_preparer.py tests/test_tool_pipeline.py tests/test_runtime_composition
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:12Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input: ```
+const r = await tools.write_stdin({"session_id":88036,"chars":"","yield_time_ms":1000,"max_output_tokens":12000});
+text(r.output);
+
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:21Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"nl -ba mewcode/runtime/agent_loop.py | sed -n '1,240p'","workdir":"/Users/xiaokezhou/workspace/mewcode-python","yield_time_ms":10000,"m
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:30Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning agent_loop simplification**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:38Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"git log --oneline --all -- mewcode/runtime/agent_loop.py | head -n 20 && git show --stat --oneline 4a43658 && git show --stat --oneline
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:49Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning runtime loop simplification**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:49Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Designing AgentLoop state refactor**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:49Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning runtime loop simplification**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:49Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Designing AgentLoop state refactor**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:14:55Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"nl -ba mewcode/agent.py | sed -n '300,390p' && nl -ba mewcode/agent.py | sed -n '390,520p'","workdir":"/Users/xiaokezhou/workspace/mewc
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:08Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Reviewing previous simplification commit**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:18Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Reviewing previous simplification commit**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:18Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Designing dataclass-based context abstraction**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:28Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Reviewing previous simplification commit**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:28Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Designing dataclass-based context abstraction**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:28Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Consolidating response handling and event emission**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:28Z)**_
+
+基线测试已通过：67 项相关测试全部成功。接下来我会做三类低风险收敛：把 assistant 消息写回的重复代码合并为一个入口、把 Turn 决策/结束事件与终止结果构造集中起来、把 `AgentRuntime` 重复的 active 状态检查合并；这些都不改公开接口，也不改变事件顺序。关键注释会标出 Conversation 单写者、截断 ToolCall 配对、取消时 ToolResult 落盘这几个容易误改的约束。
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:32Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({"cmd":"rg -n \"def add_assistant_message|class ConversationManager\" mewcode/conversation.py && nl -ba mewcode/conversation.py | sed -n '120,220p' && nl -ba mewcode
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:37Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({"cmd":"nl -ba mewcode/runtime/events.py | sed -n '1,220p'","workdir":"/Users/xiaokezhou/workspace/mewcode-python","yield_time_ms":10000,"max_output_tokens":20000});
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:48Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning run lifecycle simplification**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:52Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning run lifecycle simplification**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:52Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Refactoring turn completion and error handling**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:15:54Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({"cmd":"nl -ba mewcode/runtime/turn_preparer.py | sed -n '1,230p' && nl -ba mewcode/runtime/agent_run.py | sed -n '1,240p' && nl -ba mewcode/runtime/streaming_adapte
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:16:01Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Simplifying AgentRun _drive error handling**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:16:51Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const patch = "*** Begin Patch\n*** Update File: /Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py\n@@\n     async def _complete_truncated_response(\n@@\n         if retry is No
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:16:59Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"git diff --check && git diff --stat && git diff -- mewcode/runtime/agent_loop.py mewcode/runtime/agent_runtime.py","workdir":"/Users/xi
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:17:12Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Fixing string concatenation syntax**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:17:12Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning helper consolidation to reduce lines**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:17:21Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Fixing string concatenation syntax**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:17:21Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning helper consolidation to reduce lines**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:17:27Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Fixing string concatenation syntax**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:17:27Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning helper consolidation to reduce lines**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:17:27Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Designing run context dataclass to reduce parameters**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:17:30Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({"cmd":"rg -n \"_stream_turn|_complete_truncated_response|_complete_natural_response|_complete_tool_response|_execute_tool_batch|_finish_turn|_decide_turn|_terminal_
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:18:39Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const patch = "*** Begin Patch\n*** Update File: /Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py\n@@\n class _OutputRecoveryState:\n@@\n     attempts: int = 0\n \n \n+@datacla
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:18:45Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const patch = "*** Begin Patch\n*** Update File: /Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py\n@@\n             self._agent.client.set_max_output_tokens(MAX_TOKENS_CEILING)
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:18:55Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"uv run python -m compileall -q mewcode/runtime && git diff --check","workdir":"/Users/xiaokezhou/workspace/mewcode-python","yield_time_
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:19:06Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning code reduction with dataclass**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:19:13Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning code reduction with dataclass**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:19:13Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Designing dataclasses for turn handling**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:19:48Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const patch = "*** Begin Patch\n*** Update File: /Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py\n@@\n class _RunContext:\n@@\n     control: RunControl\n \n \n+@dataclass(froz
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:19:55Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"uv run python -m compileall -q mewcode/runtime && git diff --check","workdir":"/Users/xiaokezhou/workspace/mewcode-python","yield_time_
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:06Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const patch = "*** Begin Patch\n*** Update File: /Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py\n@@\n             self._agent.client.set_max_output_tokens(MAX_TOKENS_CEILING)
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:10Z)**_
+
+第一轮重构已经落地：`agent_loop.py` 现在用两个内部对象表达“本次 Run 的稳定依赖”和“一次模型 Turn 的完整产物”，长参数列表明显缩短；核心文件由 673 行降到 666 行，同时补上了 4 个关键语义注释。接下来正在做回归，重点核对截断恢复、取消 settlement、steering/follow-up 顺序和事件数量。
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:12Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({"cmd":"uv run pytest -q tests/test_agent_runtime.py tests/test_run_control.py tests/test_turn_preparer.py tests/test_tool_pipeline.py tests/test_runtime_composition
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:17Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input: ```
+const r = await tools.write_stdin({"session_id":35199,"chars":"","yield_time_ms":1000,"max_output_tokens":12000});
+text(r.output);
+
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:31Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Inspecting code diff and test needs**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:31Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Analyzing subtle event ordering changes**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:35Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Inspecting code diff and test needs**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:35Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Analyzing subtle event ordering changes**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:42Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const patch = "*** Begin Patch\n*** Update File: /Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py\n@@\n-        self._record_assistant_response(context.conversation, turn)\n+  
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:20:51Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({"cmd":"nl -ba mewcode/runtime/run_control.py | sed -n '70,180p' && wc -l mewcode/runtime/agent_loop.py && git diff --check","workdir":"/Users/xiaokezhou/workspace/m
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:01Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"git diff --check -- mewcode/runtime/agent_loop.py mewcode/runtime/agent_runtime.py && uv run python -m compileall -q mewcode/runtime","
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:08Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input: ```
+const r = await tools.exec_command({"cmd":"uv run pytest -q","workdir":"/Users/xiaokezhou/workspace/mewcode-python","yield_time_ms":1000,"max_output_tokens":12000});
+text(JSON.stringify(r));
+
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:13Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input: ```
+const r = await tools.write_stdin({"session_id":44354,"chars":"","yield_time_ms":1000,"max_output_tokens":12000});
+text(r.output);
+
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:22Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input: ```
+const r = await tools.write_stdin({"session_id":44354,"chars":"","yield_time_ms":1000,"max_output_tokens":12000});
+text(r.output);
+
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:36Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning memory citation and git diff checks**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:36Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Finalizing memory citations with rollout IDs**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:38Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Planning memory citation and git diff checks**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:38Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Finalizing memory citations with rollout IDs**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:40Z)**_
+
+全量回归也通过了：696 passed、1 skipped。现在再做最后一遍 diff/行号核对，只保留 runtime 的两处代码改动；`.specstory` 是会话记录自动更新，不纳入这次重构内容。
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:45Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const results = await Promise.all([
+  tools.exec_command({"cmd":"git diff --check -- mewcode/runtime/agent_loop.py mewcode/runtime/agent_runtime.py && git diff --stat -- mewcode/runtime/agent_loop.py 
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:57Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Finalizing concise Chinese summary with code citations**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:59Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Finalizing concise Chinese summary with code citations**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:21:59Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Summarizing refactor details and test results**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:22:00Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({"cmd":"nl -ba /Users/xiaokezhou/.codex/memories/MEMORY.md | sed -n '69,75p;329,338p;374,378p'","workdir":"/Users/xiaokezhou/workspace/mewcode-python","yield_time_ms
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:22:05Z)**_
+
+<tool-use data-tool-type="unknown" data-tool-name="exec"><details>
+<summary>Tool use: **exec**</summary>
+Input (truncated): ```
+const r = await tools.exec_command({"cmd":"nl -ba /Users/xiaokezhou/.codex/memories/MEMORY.md | sed -n '20,24p'","workdir":"/Users/xiaokezhou/workspace/mewcode-python","yield_time_ms":10000,"max_outpu
+...
+```
+</details></tool-use>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:22:13Z)**_
+
+<think><details><summary>Thought Process</summary>
+**Clarifying citation source inclusion**
+</details></think>
+
+_**Agent (gpt-5.6-sol 2026-08-16 14:22:22Z)**_
+
+已完成 runtime 简化，公开接口和行为保持不变。
+
+- 简化点：合并 Run/Turn 的长参数列表 → 核心循环更容易阅读 → 在 [agent_loop.py](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py:73) 引入内部 `_RunContext`、`_ModelTurn`，主循环见 [167 行](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py:167)。
+- 简化点：集中 Turn 决策和终止结果构造 → 避免重复事件逻辑与顺序漂移 → 见 [Turn 决策](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py:505) 和 [终止结果](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py:549)。
+- 简化点：统一 assistant 响应转换 → 删除自然响应、Tool 响应、截断响应中的重复映射 → 见 [assistant 消息写回](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_loop.py:613)。
+- 简化点：合并 Runtime 状态检查 → 减少重复分支 → 见 [agent_runtime.py](/Users/xiaokezhou/workspace/mewcode-python/mewcode/runtime/agent_runtime.py:91)。
+- 注释重点覆盖了截断恢复顺序、取消时 ToolResult 配对、Conversation 单写者以及截断 ToolCall 不执行等关键约束。
+
+`agent_loop.py` 从 673 行降至 665 行。验证结果：相关测试 67 项通过；全量测试 `696 passed, 1 skipped`。另有一个既存的未知 pytest mark 警告，与本次修改无关。
+
+`.specstory` 的会话记录仍有自动更新，未纳入这次代码重构范围。
