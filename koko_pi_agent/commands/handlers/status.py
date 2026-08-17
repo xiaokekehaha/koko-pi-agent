@@ -12,7 +12,7 @@ VERSION = "v0.9.0"
 
 
 async def handle_status(ctx: CommandContext) -> None:
-    lines = ["MewCode 状态", "─────────────"]
+    lines = ["Koko 状态", "─────────────"]
 
     mode = ctx.agent.permission_mode.value if ctx.agent else "unknown"
     lines.append(f"模式: {mode}")

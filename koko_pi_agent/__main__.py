@@ -142,7 +142,7 @@ async def _run_prompt(config, permission_mode, hook_engine, prompt: str, output_
     )
     from koko_pi_agent.extensions import (
         BuiltinRuntimeBindings,
-        ToolProfile,
+        RuntimeProfile,
         create_builtin_extension_host,
     )
     from koko_pi_agent.runtime import AgentRuntime, AgentRuntimeRequest
@@ -221,7 +221,7 @@ async def _run_prompt(config, permission_mode, hook_engine, prompt: str, output_
 
     runtime = await AgentRuntime.open(
         AgentRuntimeRequest(
-            profile=ToolProfile.PROMPT_LEAD,
+            profile=RuntimeProfile.PROMPT_LEAD,
             work_dir=work_dir,
             agent_factory=create_agent,
             bindings_factory=create_bindings,
@@ -417,17 +417,18 @@ async def _open_teammate_runtime(
     team_manager,
     team_name: str,
     agent_name: str,
+    mcp_manager=None,
 ):
     """创建拥有独立 ExtensionSession 的外部队友 Runtime。
 
-    MCP 是运行期动态贡献，仍由 worker boundary 在 Runtime 激活后注册并在
-    Runtime 关闭前注销。
+    MCP Tool 仍是运行期动态贡献，由 worker boundary 在 Runtime 激活后注册；但
+    manager 自身在这里就交给 runtime-resources 托管，连接失败不会留下失主 client。
     """
     from koko_pi_agent.agent import Agent
     from koko_pi_agent.config import WorktreeConfig
     from koko_pi_agent.extensions import (
         BuiltinRuntimeBindings,
-        ToolProfile,
+        RuntimeProfile,
         create_builtin_extension_host,
     )
     from koko_pi_agent.runtime import AgentRuntime, AgentRuntimeRequest
@@ -467,11 +468,12 @@ async def _open_teammate_runtime(
             team_name=team_name,
             agent_name=agent_name,
             from_agent_id=agent_name,
+            mcp_manager=mcp_manager,
         )
 
     return await AgentRuntime.open(
         AgentRuntimeRequest(
-            profile=ToolProfile.TEAMMATE_WORKER,
+            profile=RuntimeProfile.TEAMMATE_WORKER,
             work_dir=work_dir,
             agent_factory=create_agent,
             bindings_factory=create_bindings,
@@ -546,6 +548,14 @@ async def _run_teammate(team_name: str, agent_name: str) -> None:
         mode=PermissionMode.BYPASS,
     )
 
+    # manager 在 Runtime 打开前创建，使它在连接之前就归 Runtime 所有
+    mcp_manager = None
+    if config.mcp_servers:
+        from koko_pi_agent.mcp import MCPManager
+
+        mcp_manager = MCPManager()
+        mcp_manager.load_configs(config.mcp_servers)
+
     runtime = await _open_teammate_runtime(
         work_dir=work_dir,
         protocol=provider.protocol,
@@ -556,17 +566,13 @@ async def _run_teammate(team_name: str, agent_name: str) -> None:
         team_manager=team_manager,
         team_name=team_name,
         agent_name=agent_name,
+        mcp_manager=mcp_manager,
     )
     agent = runtime.agent
-    mcp_manager = None
 
     try:
-        if config.mcp_servers:
+        if mcp_manager is not None:
             try:
-                from koko_pi_agent.mcp import MCPManager
-
-                mcp_manager = MCPManager()
-                mcp_manager.load_configs(config.mcp_servers)
                 result = await mcp_manager.register_all_tools(runtime.registry)
                 for error in result.errors:
                     print(f"MCP warning: {error}", file=sys.stderr)
@@ -593,8 +599,7 @@ async def _run_teammate(team_name: str, agent_name: str) -> None:
         except (KeyboardInterrupt, asyncio.CancelledError):
             handle.cancel()
     finally:
-        if mcp_manager is not None:
-            await mcp_manager.shutdown()
+        # Runtime 关闭会撤销 contribution，然后关闭 MCP manager
         await runtime.aclose()
 
 

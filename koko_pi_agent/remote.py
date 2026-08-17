@@ -46,7 +46,7 @@ from koko_pi_agent.config import MCPServerConfig, ProviderConfig
 from koko_pi_agent.conversation import ConversationManager
 from koko_pi_agent.extensions import (
     BuiltinRuntimeBindings,
-    ToolProfile,
+    RuntimeProfile,
     create_builtin_extension_host,
 )
 from koko_pi_agent.hooks import HookEngine
@@ -337,11 +337,18 @@ class RemoteServer:
                 teammate_mode="in-process",
                 is_interactive=False,
                 enable_coordinator_mode=enable_coordinator,
+                mcp_manager=self.mcp_manager,
             )
+
+        # MCP manager 必须在 Runtime 打开前就有 owner：连接是可失败步骤，
+        # 在它被赋值给 self 之前取消会留下无人关闭的 client。
+        if self._mcp_server_configs:
+            self.mcp_manager = MCPManager()
+            self.mcp_manager.load_configs(self._mcp_server_configs)
 
         runtime = await AgentRuntime.open(
             AgentRuntimeRequest(
-                profile=ToolProfile.REMOTE_LEAD,
+                profile=RuntimeProfile.REMOTE_LEAD,
                 work_dir=work_dir,
                 agent_factory=create_agent,
                 bindings_factory=create_bindings,
@@ -375,14 +382,16 @@ class RemoteServer:
     # ------------------------------------------------------------------
 
     async def _init_mcp(self) -> None:
-        """连接所有配置的 MCP 服务器，注册工具。"""
-        if not self._mcp_server_configs or self.registry is None:
+        """连接所有配置的 MCP 服务器，注册工具。
+
+        manager 由 `_init_agent` 在 Runtime 打开前创建并交给
+        `koko_pi_agent.runtime-resources` 托管，这里只做连接。
+        """
+        manager = self.mcp_manager
+        if manager is None or self.registry is None:
             return
 
-        manager = MCPManager()
-        manager.load_configs(self._mcp_server_configs)
         connect_result = await manager.register_all_tools(self.registry)
-        self.mcp_manager = manager
 
         for err in connect_result.errors:
             log.warning("MCP error: %s", err)
@@ -410,13 +419,12 @@ class RemoteServer:
             )
 
     async def _shutdown(self) -> None:
-        if self.mcp_manager is not None:
-            await self.mcp_manager.shutdown()
-            self.mcp_manager = None
         runtime = self.runtime
         if runtime is not None:
+            # Runtime 关闭会撤销 contribution，然后关闭 MCP manager
             await runtime.aclose()
             self.runtime = None
+        self.mcp_manager = None
         session = self.session
         if session is not None:
             session.close()

@@ -42,7 +42,7 @@ class AgentRuntime:
         self._agent = agent
         self._registry = registry
         self._session = session
-        self._diagnostics = list(session.diagnostics)
+        self._local_diagnostics: list[ExtensionDiagnostic] = []
         self._state = "active"
         self._close_lock = asyncio.Lock()
 
@@ -82,7 +82,12 @@ class AgentRuntime:
 
     @property
     def diagnostics(self) -> tuple[ExtensionDiagnostic, ...]:
-        return tuple(self._diagnostics)
+        """每次读取都组合 Session 实时诊断与 Runtime 自己的诊断。
+
+        不是 open 时快照：扩展后台任务在运行期失败必须可见。
+        """
+
+        return tuple(self._session.diagnostics) + tuple(self._local_diagnostics)
 
     @property
     def state(self) -> str:
@@ -146,7 +151,7 @@ class AgentRuntime:
 
     def _record_leaked_contributions(self) -> None:
         for contribution in self._registry.list_contributions():
-            self._diagnostics.append(
+            self._local_diagnostics.append(
                 ExtensionDiagnostic(
                     extension_id=contribution.owner.extension_id,
                     source=contribution.owner.source,
@@ -155,6 +160,9 @@ class AgentRuntime:
                         f"Tool '{contribution.name}' remained registered "
                         "after AgentRuntime close"
                     ),
+                    kind="contribution",
+                    name=contribution.name,
+                    phase="closed",
                 )
             )
 

@@ -631,7 +631,7 @@ class TestAgentCoordinatorIntegration:
         from koko_pi_agent.prompts import build_system_prompt, IDENTITY_SECTION
         prompt = build_system_prompt()
         # 验证 identity section 内容包含在 prompt 中
-        assert "MewCode" in prompt
+        assert "Koko" in prompt
         assert IDENTITY_SECTION.content[:30] in prompt
 
     def test_coordinator_guidance_is_a_reminder_not_a_replacement(self):

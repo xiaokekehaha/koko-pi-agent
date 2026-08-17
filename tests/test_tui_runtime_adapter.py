@@ -84,7 +84,7 @@ async def test_tui_provider_owns_tui_profile_runtime(
         assert {
             contribution.owner.extension_id
             for contribution in app.registry.list_contributions()
-        } == {"mewcode.builtin-tools"}
+        } == {"koko_pi_agent.builtin-tools"}
 
         first_runtime = app.runtime
         await app._select_provider(
@@ -284,3 +284,76 @@ async def test_tui_real_run_delivers_and_persists_steering_once(
         assert persisted.count("change direction") == 1
         assert persisted.count("first answer") == 1
         assert persisted.count("second answer") == 1
+
+
+class _RecordingMCPManager:
+    """记录 shutdown 是否被入口直接调用。"""
+
+    def __init__(self) -> None:
+        self.shutdown_calls = 0
+
+    async def shutdown(self) -> None:
+        self.shutdown_calls += 1
+
+
+@pytest.mark.asyncio
+async def test_tui_stop_mcp_initialization_leaves_manager_to_runtime() -> None:
+    """入口只停连接动作，manager 由 runtime-resources 关闭（2C5）。"""
+
+    app = MewCodeApp(providers=[])
+    manager = _RecordingMCPManager()
+    app.mcp_manager = manager
+
+    started = asyncio.Event()
+
+    async def never_finishes() -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    app._mcp_init_task = asyncio.create_task(never_finishes())
+    await started.wait()
+
+    await app._stop_mcp_initialization()
+
+    assert app._mcp_init_task is None
+    # manager 的所有权已交给 Runtime，入口不得自己 shutdown，否则会关两次
+    assert manager.shutdown_calls == 0
+    assert app.mcp_manager is manager
+
+
+@pytest.mark.asyncio
+async def test_tui_stop_mcp_initialization_does_not_swallow_own_cancellation() -> None:
+    """asyncio.wait 而非 await task：本协程被取消时必须继续向上传播。"""
+
+    app = MewCodeApp(providers=[])
+
+    async def never_finishes() -> None:
+        await asyncio.Event().wait()
+
+    app._mcp_init_task = asyncio.create_task(never_finishes())
+
+    entered = asyncio.Event()
+
+    async def caller() -> None:
+        entered.set()
+        await app._stop_mcp_initialization()
+
+    task = asyncio.create_task(caller())
+    await entered.wait()
+    await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_tui_stop_mcp_initialization_is_noop_without_task() -> None:
+    app = MewCodeApp(providers=[])
+    app.mcp_manager = _RecordingMCPManager()
+    app._mcp_init_task = None
+
+    await app._stop_mcp_initialization()
+
+    assert app._mcp_init_task is None
+    assert app.mcp_manager.shutdown_calls == 0

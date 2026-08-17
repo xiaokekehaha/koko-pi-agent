@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from koko_pi_agent.extensions.contracts import ExtensionDefinition, ToolProfile
+from koko_pi_agent.extensions.contracts import ExtensionDefinition, RuntimeProfile
 from koko_pi_agent.extensions.host import ExtensionAPI, ExtensionCatalog, ExtensionHost
 from koko_pi_agent.tools import ToolRegistry
 
@@ -53,6 +53,10 @@ class BuiltinRuntimeBindings:
     agent_name: str = ""
     from_agent_id: str = ""
     synthetic_output_schema: dict[str, Any] | None = None
+    # 由入口在 Runtime 打开前预创建，使其在开始连接前就已经有 owner。
+    mcp_manager: Any = None
+    # 返回一个待托管的协程；Runtime 负责取消并等待它。
+    stale_cleanup_factory: Callable[[], Awaitable[None]] | None = None
 
 
 class BuiltinBindingError(ValueError):
@@ -70,8 +74,8 @@ def _required(value: T | None, field_name: str, tool_name: str) -> T:
     return value
 
 
-_PROFILE_TOOL_NAMES: dict[ToolProfile, tuple[str, ...]] = {
-    ToolProfile.TUI_LEAD: (
+_PROFILE_TOOL_NAMES: dict[RuntimeProfile, tuple[str, ...]] = {
+    RuntimeProfile.TUI_LEAD: (
         "ReadFile",
         "WriteFile",
         "EditFile",
@@ -91,7 +95,7 @@ _PROFILE_TOOL_NAMES: dict[ToolProfile, tuple[str, ...]] = {
         "SyntheticOutput",
         "TaskStop",
     ),
-    ToolProfile.PROMPT_LEAD: (
+    RuntimeProfile.PROMPT_LEAD: (
         "ReadFile",
         "WriteFile",
         "EditFile",
@@ -105,7 +109,7 @@ _PROFILE_TOOL_NAMES: dict[ToolProfile, tuple[str, ...]] = {
         "SyntheticOutput",
         "TaskStop",
     ),
-    ToolProfile.REMOTE_LEAD: (
+    RuntimeProfile.REMOTE_LEAD: (
         "ReadFile",
         "WriteFile",
         "EditFile",
@@ -120,7 +124,7 @@ _PROFILE_TOOL_NAMES: dict[ToolProfile, tuple[str, ...]] = {
         "TaskStop",
         "SyntheticOutput",
     ),
-    ToolProfile.TEAMMATE_WORKER: (
+    RuntimeProfile.TEAMMATE_WORKER: (
         "ReadFile",
         "WriteFile",
         "EditFile",
@@ -142,7 +146,7 @@ _PROFILE_TOOL_NAMES: dict[ToolProfile, tuple[str, ...]] = {
 }
 
 
-def tool_names_for_profile(profile: ToolProfile) -> tuple[str, ...]:
+def tool_names_for_profile(profile: RuntimeProfile) -> tuple[str, ...]:
     return _PROFILE_TOOL_NAMES[profile]
 
 
@@ -319,7 +323,7 @@ def _install_builtin_tools(api: ExtensionAPI, raw_bindings: Any) -> None:
 
     if not isinstance(raw_bindings, BuiltinRuntimeBindings):
         raise BuiltinBindingError(
-            "mewcode.builtin-tools requires BuiltinRuntimeBindings"
+            "koko_pi_agent.builtin-tools requires BuiltinRuntimeBindings"
         )
     if raw_bindings.agent.registry is not raw_bindings.registry:
         raise BuiltinBindingError(
@@ -331,16 +335,45 @@ def _install_builtin_tools(api: ExtensionAPI, raw_bindings: Any) -> None:
         api.register_tool(_create_builtin_tool(name, raw_bindings, file_state_cache))
 
 
+def _install_runtime_resources(api: ExtensionAPI, raw_bindings: Any) -> None:
+    """把入口预创建的长生命周期资源交给 Runtime 托管。
+
+    这个 Definition 不连接 MCP、也不实现 worktree 清理逻辑：业务逻辑留在原
+    Adapter，这里只登记所有权，让连接取消或异常不会留下失主对象。缺少对应
+    binding 的 profile（例如 PROMPT_LEAD）是 no-op。
+    """
+
+    if not isinstance(raw_bindings, BuiltinRuntimeBindings):
+        raise BuiltinBindingError(
+            "koko_pi_agent.runtime-resources requires BuiltinRuntimeBindings"
+        )
+
+    if raw_bindings.mcp_manager is not None:
+        api.defer("mcp-manager", raw_bindings.mcp_manager.shutdown)
+
+    if raw_bindings.stale_cleanup_factory is not None:
+        api.start_task(
+            "worktree-stale-cleanup",
+            raw_bindings.stale_cleanup_factory(),
+        )
+
+
 def create_builtin_extension_host() -> ExtensionHost:
     return ExtensionHost(
         ExtensionCatalog(
             [
                 ExtensionDefinition(
-                    extension_id="mewcode.builtin-tools",
-                    display_name="MewCode built-in tools",
+                    extension_id="koko_pi_agent.builtin-tools",
+                    display_name="Koko built-in tools",
                     source="builtin",
                     installer=_install_builtin_tools,
-                )
+                ),
+                ExtensionDefinition(
+                    extension_id="koko_pi_agent.runtime-resources",
+                    display_name="Koko runtime resources",
+                    source="builtin",
+                    installer=_install_runtime_resources,
+                ),
             ]
         )
     )

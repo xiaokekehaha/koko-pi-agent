@@ -478,7 +478,7 @@ async def test_plan_mode_denied_tool_returns_error():
 
 def test_system_prompt_normal():
     sp = build_system_prompt()
-    assert "MewCode" in sp
+    assert "Koko" in sp
     assert "Plan mode" not in sp
 
 def test_system_prompt_plan():

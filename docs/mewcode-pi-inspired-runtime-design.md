@@ -1,9 +1,9 @@
 # MewCode Runtime 迭代设计：参考 Pi，而不是实现 Mini Pi
 
-> - 状态：Design v0.9，阶段 0/1/2A/2B 已实施并通过全量验证
+> - 状态：Design v0.9，阶段 0/1/2A/2B/2C 已实施并通过全量验证
 > - 日期：2026-08-16
 > - 目标主体：当前 MewCode 0.2.0 项目，Python 3.11+
-> - 当前阶段：阶段 2B TurnPreparer 已完成；下一阶段候选为 2C 资源与受控任务所有权
+> - 当前阶段：阶段 0/1/2A/2B/2C 均已实施并验证；下一阶段候选为 2D 事件管线或 2E Command 所有权
 > - 核心取向：在现有 MewCode 上迭代 Runtime，参考 Pi 的分层与扩展机制，并用 Python 的资源管理机制保证可靠清理
 > - 明确边界：不是另起炉灶实现一个 Mini Pi，也不是把 MewCode 改名或复刻成 Pi
 
@@ -14,7 +14,8 @@
 - [阶段 0：统一 Agent Loop 与 Tool Execution Pipeline](./mewcode-agent-loop-stage0-design.md)
 - [阶段 1：ExtensionHost 内置 Tool 纵向切片](./mewcode-extension-host-stage1-design.md)
 - [阶段 2A：AgentRun 控制面与运行中输入](./mewcode-agent-run-control-stage2a-design.md)
-- [ResourceScope 与 TaskSupervisor 候选设计（已顺延）](./mewcode-extension-resources-stage2a-design.md)
+- [阶段 2C：ResourceScope 与 TaskSupervisor](./koko-extension-resources-stage2c-design.md)
+- [ResourceScope 原候选设计（已被 2C 复核版取代）](./mewcode-extension-resources-stage2a-design.md)
 - [Pi 官方仓库](https://github.com/earendil-works/pi)
 - [Pi Chapter 1：Core、Agent 与 Harness](https://books.antinomie.org/pi/chapter/01)
 - [Pi Chapter 2：一次 Prompt 的完整路径](https://books.antinomie.org/pi/chapter/02)
@@ -811,7 +812,11 @@ sequenceDiagram
 
 ### 阶段 2C：资源与受控后台任务纳入所有权
 
-目标保持不变：让 ExtensionAPI 完整管理长生命周期资源和 extension-owned task。原[候选详细设计](./mewcode-extension-resources-stage2a-design.md)继续保留，实施前按 2C 编号复核，不与 RunControl 混做。
+目标保持不变：让 ExtensionAPI 完整管理长生命周期资源和 extension-owned task。
+
+已实施并验证，见[阶段 2C 详细设计](./koko-extension-resources-stage2c-design.md)。原候选设计的三方法 Interface、四个内部 Module、9 条生命周期语义中的 8 条与 7 条不变量中的 6 条均沿用；实质修订四处：批次由 6 批改为 7 批（拆出 `extension_id` 命名统一）、diagnostics 工作因 2A/2B 已落地 `_close_lock` 与 `_record_leaked_contributions` 而收窄、`RuntimeProfile` 改名移到真实 Definition 批次、`agent_loop.py` 两个 fire-and-forget task 明确列为非目标并加反向结构门。
+
+实施结果：新增 `koko_pi_agent/extensions/resources.py`（`ResourceScope` + 内部 `TaskSupervisor`）；`ExtensionAPI` 增加 `acquire`/`defer`/`start_task`；catalog 加入第二个生产 Definition `koko_pi_agent.runtime-resources`，用它托管 MCPManager 关闭与 TUI worktree stale-cleanup 任务；TUI/Remote/teammate 三个入口不再自己持有这两类资源。全量 `716 passed`（较基线 +24 个新测试），零新增失败；`compileall` 与 `git diff --check` 通过；当前环境无 Ruff，未声称通过。
 
 ### 阶段 2D：扩展事件管线
 
@@ -1011,4 +1016,4 @@ sequenceDiagram
 
 ## 20. 下一步
 
-阶段 0、阶段 1、[阶段 2A AgentRun 控制面](./mewcode-agent-run-control-stage2a-design.md)和阶段 2B TurnPreparer 均已完成。2B 已把每轮模型调用前的 Context 准备收进单一 `prepare()` Interface，AgentLoop 只消费 `PreparedModelCall`，RunControl、ToolPipeline、Session 和 Provider 行为保持不变。下一步候选是按 2C 编号复核并实施[ResourceScope 与 TaskSupervisor 候选设计](./mewcode-extension-resources-stage2a-design.md)；事件、Command、外部扩展和重载仍需各自审批。
+阶段 0、阶段 1、[阶段 2A AgentRun 控制面](./mewcode-agent-run-control-stage2a-design.md)和阶段 2B TurnPreparer 均已完成。2B 已把每轮模型调用前的 Context 准备收进单一 `prepare()` Interface，AgentLoop 只消费 `PreparedModelCall`，RunControl、ToolPipeline、Session 和 Provider 行为保持不变。[阶段 2C ResourceScope 与 TaskSupervisor](./koko-extension-resources-stage2c-design.md)已完成 2C0–2C6 全部批次：扩展现在拥有真正的资源与受控后台任务所有权，关闭顺序、取消超时与清理失败聚合都由 Host 统一保证。下一步候选是 2D 事件管线（含 `hooks/engine.py` 目前无主的 `ensure_future`）或 2E Command 所有权，两者都需要单独审批；外部扩展发现和重载仍在其后。

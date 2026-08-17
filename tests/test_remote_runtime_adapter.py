@@ -70,7 +70,7 @@ async def test_remote_initialization_owns_remote_profile_runtime(
     assert {
         contribution.owner.extension_id
         for contribution in server.registry.list_contributions()
-    } == {"mewcode.builtin-tools"}
+    } == {"koko_pi_agent.builtin-tools"}
 
     runtime = server.runtime
     await server._shutdown()
@@ -110,7 +110,11 @@ async def test_remote_shutdown_is_ordered_and_idempotent() -> None:
     await server._shutdown()
     await server._shutdown()
 
-    assert order == ["mcp", "runtime", "session"]
+    # MCP manager 的关闭已迁进 Runtime 的 ResourceScope，入口不再自己 shutdown；
+    # 这里只验证入口仍按 runtime -> session 的顺序收尾且幂等
+    assert order == ["runtime", "session"]
+    assert server.runtime is None
+    assert server.mcp_manager is None
 
 
 class _QueueingRuntime:

@@ -52,7 +52,7 @@ def test_remote_page_contains_self_contained_ascii_mascot() -> None:
     assert 'id="mascot-close"' in mascot_markup
     assert 'type="button"' in mascot_markup
     assert 'id="mascot-art"' in mascot_markup
-    assert 'aria-label="MewCode animated ASCII corgi"' in mascot_markup
+    assert 'aria-label="Koko animated ASCII corgi"' in mascot_markup
     assert "<img" not in mascot_markup
     assert "http://" not in mascot_markup
     assert "https://" not in mascot_markup

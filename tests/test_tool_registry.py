@@ -65,7 +65,7 @@ def test_registration_handle_closes_only_its_contribution_and_cleans_state() -> 
 def test_contribution_provenance_is_visible_and_reported_on_conflict() -> None:
     registry = ToolRegistry()
     existing_owner = ContributionOwner(
-        extension_id="mewcode.builtin.toolset",
+        extension_id="koko_pi_agent.builtin.toolset",
         source="builtin://toolset",
         runtime_id="runtime-a",
         generation=1,
@@ -101,7 +101,7 @@ def test_borrowed_tool_view_is_read_only_and_never_closes_parent_contributions()
 ):
     parent = ToolRegistry()
     parent_owner = ContributionOwner(
-        extension_id="mewcode.builtin-tools",
+        extension_id="koko_pi_agent.builtin-tools",
         source="builtin",
         runtime_id="parent-runtime",
         generation=3,

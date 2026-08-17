@@ -321,7 +321,7 @@ async def test_mcp_manager_tracks_provenance_and_unregisters_before_shutdown(
     registry.register(
         _ServerTool("Builtin", "builtin"),
         owner=ContributionOwner(
-            extension_id="mewcode.builtin-tools",
+            extension_id="koko_pi_agent.builtin-tools",
             source="builtin",
             runtime_id="runtime-a",
             generation=2,

@@ -9,7 +9,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MewCode Remote</title>
+<title>Koko Remote</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 :root {
@@ -229,13 +229,13 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 </style>
 </head>
 <body>
-<div id="mascot-overlay" role="region" aria-label="MewCode animated ASCII corgi" aria-hidden="true">
+<div id="mascot-overlay" role="region" aria-label="Koko animated ASCII corgi" aria-hidden="true">
   <button id="mascot-close" type="button" aria-label="Close mascot" title="Close">x</button>
   <pre id="mascot-art" aria-hidden="true"></pre>
 </div>
 <div id="app">
   <div id="status-bar">
-    <span class="brand">⚡ MewCode Remote</span>
+    <span class="brand">⚡ Koko Remote</span>
     <div class="info">
       <span id="conn-status"><span class="dot disconnected"></span>Connecting...</span>
       <span id="token-info"></span>
