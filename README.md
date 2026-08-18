@@ -2,6 +2,21 @@
 
 终端里的 AI 编程助手。基于 Python + [Textual](https://textual.textualize.io/) 构建，提供交互式 TUI、非交互式单次执行、浏览器远程模式三种前端，并内置多 Agent 团队协作能力。
 
+架构上，Koko 的 Runtime 参考 [Pi](https://github.com/earendil-works/pi) 的分层设计，取向是**稳定核心 + 可扩展 Runtime**：
+
+```text
+前端：TUI  /  -p 单次执行  /  Remote 浏览器  /  队友 worker
+                        ↓  同一条装配路径
+        __main__.py（唯一组装根） → AgentRuntime
+                        ↓
+   AgentLoop        +   ToolPipeline      +   ExtensionHost
+ 唯一的模型↔工具循环    唯一的工具执行通道      能力登记与生命周期
+```
+
+这套分层要守住的是三件事：生产代码里只存在一个「模型 → 工具 → 模型」循环和一条工具管线；新能力通过扩展登记接入，不必改动内核；能力由谁注册、何时生效、何时撤销都可追踪，会话结束不留下悬挂的工具、监听器和后台任务。
+
+参考不等于复刻。Pi 是 TypeScript 的，Koko 是 Python 的，目标也始终是 Koko 自己 —— 借鉴的是职责边界与不变量的形状，不是它的类型系统与包边界。哪些哲学被借鉴、哪些地方 Koko 有意不同、还差什么，见[设计参考：Pi](#设计参考pi)。
+
 > 项目地址：https://github.com/xiaokekehaha/koko-pi-agent
 
 ---
@@ -24,6 +39,7 @@
 
 | 能力 | 说明 |
 | --- | --- |
+| 分层 Runtime | 唯一组装根 + 唯一 `AgentLoop` + 唯一 `ToolPipeline` + `ExtensionHost` 能力登记，参考 Pi 的分层设计 |
 | 三种前端 | 交互式 TUI、`-p` 单次执行（支持 NDJSON 事件流）、WebSocket + 浏览器远程模式 |
 | 多模型协议 | `anthropic` / `openai` / `openai-compat` 三套协议，可同时配置多个 provider 并在会话中切换 |
 | 权限体系 | 四级权限模式 + 危险命令检测 + 路径沙箱 + 三层规则文件 |
