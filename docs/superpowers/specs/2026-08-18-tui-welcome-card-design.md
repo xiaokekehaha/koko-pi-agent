@@ -128,8 +128,8 @@ class McpState:
 | 字段 | 来源 |
 |---|---|
 | `app_name` / `app_version` | `app.py` 的 `APP_NAME` / `APP_VERSION` |
-| `user_name` | 依次尝试：配置里的 `user_name` → `git config user.name` → `$USER` → `None` |
-| `is_returning` | `SessionManager(work_dir).list()` 非空 |
+| `user_name` | 依次尝试：`git config user.name` → `$USER` → `None`（`ProviderConfig` 与配置文件都没有 `user_name` 字段，不新增） |
+| `is_returning` | `session_manager.list()` 里存在 `id` 不等于当前 session 的记录 |
 | `model` / `provider_name` | `provider.model` / `provider.name` |
 | `work_dir` | 已有的 `work_dir`，渲染前做 `~` 缩写 |
 | `skills_count` | `len(skill_loader.get_catalog())` |
@@ -142,6 +142,12 @@ class McpState:
 调用时设 1 秒超时，任何异常都静默降级到下一级。若最终为 `None`，
 问候语退化为不带称呼的 `Welcome back!` / `Welcome to Koko!`。
 
+`is_returning` 必须排除当前会话：`self.session = self.session_manager.create()`
+发生在 `app.py:952`，远早于卡片挂载，所以 `list()` 必然包含刚创建的这一条。
+直接判断 `list()` 非空会让 `is_returning` 恒为 `True`，首次使用的用户永远看不到
+`Welcome to Koko`。正确写法是过滤掉 `id == self.session.session_id` 的那条再判空
+（而不是简单地判断 `len(...) > 1`，因为不能假设 `create()` 一定已落盘可见）。
+
 ## 渲染规格
 
 ### 宽档（≥100 列）
@@ -153,7 +159,7 @@ class McpState:
 │                                                                                         │
 │    Welcome back, xiaokezhou!      Tips for getting started                              │
 │                                     Shift+Tab 切权限模式 · /plan 先规划再动手            │
-│       ▄▀▀▄   ▄▀▀▄                   /team 拉一支多智能体团队并行干活                     │
+│       ▄▀▀▄   ▄▀▀▄                   /worktree 让并发任务各自在独立工作树里改             │
 │      █ ●  ▀▀▀  ● █                  /skill 看已加载技能 · /help 全部命令                 │
 │      ▀█▄▄▄▄▄▄▄▄▄█▀                                                                      │
 │        ▀█▀   ▀█▀                  Session ready                                         │
@@ -180,7 +186,7 @@ Tips 与 Ready 各压成一行。
 │   ▀█▄▄▄▄▄▄▄▄▄█▀   ~/workspace/koko                              │
 │     ▀█▀   ▀█▀                                                   │
 │                                                                 │
-│  Tips   Shift+Tab 切模式 · /plan 规划 · /team 团队 · /help       │
+│  Tips   Shift+Tab 切模式 · /plan 规划 · /skill 技能 · /help      │
 │  Ready  12 skills · 4 agents · 3 hooks · MCP connecting…        │
 │                                                                 │
 ╰─────────────────────────────────────────────────────────────────╯
@@ -214,8 +220,15 @@ Tips 与 Ready 各压成一行。
 渲染时用 `random.Random(ctx.tips_seed).sample(TIPS, k)` 抽样，宽档 `k=3`，中档 `k=2`，
 窄档不抽。`tips_seed` 为 `None` 时用系统随机源，测试注入固定整数保证可断言。
 
-初始 tip 池覆盖：权限模式切换、plan 模式、team 多智能体、skills、sub-agents、
-worktree 隔离、memory、`/help`。
+初始 tip 池覆盖：权限模式切换、plan 模式、worktree 隔离、skills、后台任务、
+memory 与上下文压缩、工具块折叠、rewind。
+
+**约束**：tip 里出现的每个斜杠命令都必须是已注册命令。当前已注册的是
+`/help` `/compact` `/clear` `/plan` `/session` `/mcp` `/memory` `/mascot`
+`/permission` `/sandbox` `/rewind` `/status` `/skill`（`ALL_COMMANDS`）加上
+`/worktree` `/tasks` `/trace`（在 `_select_provider_unlocked` 里动态注册）。
+注意 `commands/handlers/review.py` 定义了 `REVIEW_COMMAND` 但从未注册，
+`/review` 不可用；也不存在 `/team` 命令——多智能体团队没有斜杠命令入口。
 
 ## 生命周期与 MCP 回填
 
