@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -99,3 +100,68 @@ def render_pixels(rows: tuple[str, ...]) -> list[RichText]:
                 line.append("▀", style=Style(color=top_color, bgcolor=bottom_color))
         lines.append(line)
     return lines
+
+
+# 每条 tip 里出现的斜杠命令都必须是已注册命令，参见 tests/test_welcome.py
+# 的 test_tips_only_reference_registered_commands。
+TIPS: tuple[str, ...] = (
+    "Shift+Tab 切权限模式 · /plan 先规划再动手",
+    "/worktree 让并发任务各自在独立工作树里改",
+    "/skill 看已加载技能 · /help 全部命令",
+    "/tasks 查看后台子任务的进度",
+    "/memory 管理长期记忆 · /compact 手动压缩上下文",
+    "Ctrl+O 折叠或展开工具调用块",
+    "/rewind 回退到任意一条历史消息",
+    "/trace 查看这一轮的执行轨迹",
+    "/session 恢复之前的会话",
+    "/sandbox 查看当前的沙箱隔离状态",
+)
+
+
+def pick_tips(count: int, seed: int | None = None) -> list[str]:
+    """从 tip 池里抽 count 条。seed 固定时结果可复现，供测试断言。"""
+    if count <= 0:
+        return []
+    return random.Random(seed).sample(TIPS, min(count, len(TIPS)))
+
+
+def greeting(ctx: WelcomeContext) -> str:
+    opener = "Welcome back" if ctx.is_returning else f"Welcome to {ctx.app_name}"
+    if ctx.user_name:
+        return f"{opener}, {ctx.user_name}!"
+    return f"{opener}!"
+
+
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def readiness_parts(ctx: WelcomeContext) -> list[str]:
+    """本次会话装配了什么。计数为 0 的项直接不显示，免得满屏都是 0。"""
+    parts: list[str] = []
+    if ctx.skills_count:
+        parts.append(f"{ctx.skills_count} skills")
+    if ctx.agents_count:
+        parts.append(f"{ctx.agents_count} agents")
+    if ctx.hooks_count:
+        parts.append(f"{ctx.hooks_count} hooks")
+    if ctx.memory_entries:
+        parts.append(f"memory {ctx.memory_entries}")
+    if not parts:
+        parts.append("no extensions loaded")
+    return parts
+
+
+def mcp_line(state: McpState) -> str | None:
+    """MCP 那一行。未配置 MCP 时返回 None，调用方据此整行省略。"""
+    if state.kind == "none":
+        return None
+    if state.kind == "connecting":
+        return "MCP · connecting…"
+    if state.kind == "ready":
+        servers = _plural(state.server_count, "server")
+        tools = _plural(state.tool_count, "tool")
+        return f"MCP · {servers} · {tools}"
+    if state.auth_needed:
+        return f"MCP · {state.auth_needed} needs auth · run /mcp"
+    return f"MCP · {len(state.errors)} failed · run /mcp"
