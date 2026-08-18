@@ -1261,6 +1261,45 @@ class KokoApp(App):
         self._welcome_width = width
         card.update(render_welcome(ctx, width))
 
+    def _refresh_welcome_mcp(
+        self, server_count: int, tool_count: int, errors: list[str]
+    ) -> None:
+        """MCP 异步初始化完成后原地回填卡片。
+
+        卡片可能已经被 /clear 卸载，也可能已经滚出视野——两种情况下更新都是无害的，
+        所以不做可见性判断，只在引用为 None 时跳过。
+        """
+        ctx = self._welcome_ctx
+        card = self._welcome_card
+        if ctx is None or card is None:
+            return
+        if errors:
+            auth_needed = sum(1 for err in errors if "auth" in err.lower())
+            ctx.mcp = McpState(
+                kind="warning",
+                server_count=server_count,
+                tool_count=tool_count,
+                auth_needed=auth_needed,
+                errors=tuple(errors),
+            )
+        else:
+            ctx.mcp = McpState(
+                kind="ready", server_count=server_count, tool_count=tool_count
+            )
+        # 用挂载时结算的同一宽度重渲染，避免回填导致布局跳档。
+        card.update(render_welcome(ctx, self._welcome_width or 80))
+
+        warning = render_mcp_warning(ctx)
+        if warning is None:
+            return
+        existing = self.query("#welcome-warning")
+        if existing:
+            existing.first(Static).update(warning)
+        else:
+            self.query_one("#chat-area", VerticalScroll).mount(
+                Static(warning, id="welcome-warning"), after=card
+            )
+
     async def _resolve_context_window(self, provider: ProviderConfig) -> None:
         await resolve_context_window(provider)
         if self.agent is not None:
@@ -1436,6 +1475,9 @@ class KokoApp(App):
     def _clear_chat(self) -> None:
         chat = self.query_one("#chat-area", VerticalScroll)
         chat.remove_children()
+        # 卡片随对话一起被清掉了，别让 MCP 回填去更新已卸载的 widget。
+        self._welcome_card = None
+        self._welcome_ctx = None
 
     async def _dispatch_command(
         self,
@@ -2310,6 +2352,7 @@ class KokoApp(App):
         tools_after = len(self.registry.list_tools())
         mcp_tools = tools_after - tools_before
         server_count = len(connect_result.servers)
+        self._refresh_welcome_mcp(server_count, mcp_tools, list(connect_result.errors))
         if server_count > 0 and mcp_tools > 0:
             # 构建 MCP 指令，从 InitializeResult 提取 instructions
             parts = []
