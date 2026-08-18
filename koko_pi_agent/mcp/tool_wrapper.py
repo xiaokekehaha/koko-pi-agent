@@ -66,7 +66,7 @@ class MCPToolWrapper(Tool):
         self._server_name = server_name
         self._tool_def = tool_def
         self._client = client
-        self.name = f"mcp_{server_name}_{tool_def.name}"
+        self.name = f"mcp__{server_name}__{tool_def.name}"
         self.description = tool_def.description or tool_def.name
         self.category = "command"
         self.is_concurrency_safe = False
@@ -78,10 +78,6 @@ class MCPToolWrapper(Tool):
     @property
     def mcp_tool_name(self) -> str:
         return self._tool_def.name
-
-    @property
-    def server_name(self) -> str:
-        return self._server_name
 
     @property
     def server_name(self) -> str:
@@ -99,7 +95,7 @@ class MCPToolWrapper(Tool):
     async def execute(self, params: BaseModel) -> ToolResult:
         if not self._client.is_alive:
             try:
-                await self._client.connect()
+                await self._client.reconnect()
             except Exception as e:
                 return ToolResult(
                     output=f"MCP server '{self._server_name}' reconnect failed: {e}",
@@ -111,7 +107,7 @@ class MCPToolWrapper(Tool):
                 self._tool_def.name, params.model_dump(exclude_none=True)
             )
         except Exception as e:
-            self._client._alive = False
+            self._client.mark_dead()
             return ToolResult(
                 output=f"MCP tool call failed: {e}",
                 is_error=True,

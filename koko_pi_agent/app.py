@@ -802,7 +802,6 @@ class KokoApp(App):
         self._spinner_idx: int = 0
         self._spinner_timer = None
         self._spinner_label: Static | None = None
-        self._mcp_server_info: str = ""
         self._agent_task: asyncio.Task[None] | None = None
         self._subagent_task: asyncio.Task[None] | None = None
         self._subagent_start_time: float | None = None
@@ -2220,8 +2219,6 @@ class KokoApp(App):
         tools_after = len(self.registry.list_tools())
         mcp_tools = tools_after - tools_before
         server_count = len(connect_result.servers)
-        if server_count > 0:
-            self._mcp_server_info = f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
         if server_count > 0 and mcp_tools > 0:
             # 构建 MCP 指令，从 InitializeResult 提取 instructions
             parts = []
