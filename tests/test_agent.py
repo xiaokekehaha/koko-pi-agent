@@ -128,20 +128,20 @@ async def test_single_step_tool_call():
 async def test_multi_step_autonomous():
     """Agent 先 WriteFile 再 ReadFile 然后停止 —— 端到端的多步流程。"""
     # 清理残留文件，避免 read-before-edit 拦截新文件创建
-    test_file = "/tmp/mewcode_test_hello.txt"
+    test_file = "/tmp/koko_test_hello.txt"
     if os.path.exists(test_file):
         os.remove(test_file)
     client = MockLLMClient([
         # 第 1 轮：WriteFile
         [
             TextDelta("Creating file."),
-            ToolCallComplete("t1", "WriteFile", {"file_path": "/tmp/mewcode_test_hello.txt", "content": "Hello World"}),
+            ToolCallComplete("t1", "WriteFile", {"file_path": "/tmp/koko_test_hello.txt", "content": "Hello World"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=20),
         ],
         # 第 2 轮：ReadFile 进行验证
         [
             TextDelta("Verifying content."),
-            ToolCallComplete("t2", "ReadFile", {"file_path": "/tmp/mewcode_test_hello.txt"}),
+            ToolCallComplete("t2", "ReadFile", {"file_path": "/tmp/koko_test_hello.txt"}),
             StreamEnd("end_turn", input_tokens=40, output_tokens=25),
         ],
         # 第 3 轮：最终答案

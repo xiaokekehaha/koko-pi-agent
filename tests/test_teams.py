@@ -540,7 +540,7 @@ class TestCoordinatorMode:
         assert "<task_id>" not in prompt
 
     def test_system_prompt_uses_real_subagent_type(self):
-        # MewCode 的内建类型是 general-purpose / plan / explore，没有 worker，
+        # Koko 的内建类型是 general-purpose / plan / explore，没有 worker，
         # 提示词里写 worker 会让 Lead 调用一个不存在的类型
         prompt = get_coordinator_system_prompt()
         assert 'subagent_type: "worker"' not in prompt

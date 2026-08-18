@@ -5,7 +5,7 @@
 Remote Control 服务器：通过 WebSocket 桥接 Agent 事件和 Web UI。
 
 使用 websockets 库提供 HTTP（静态 HTML）+ WebSocket 服务，
-让用户在浏览器中与 MewCode Agent 交互。
+让用户在浏览器中与 Koko Agent 交互。
 """
 
 from __future__ import annotations

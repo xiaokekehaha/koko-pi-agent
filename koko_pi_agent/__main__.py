@@ -96,10 +96,10 @@ def main() -> None:
         asyncio.run(server.run())
         return
 
-    from koko_pi_agent.app import MewCodeApp
+    from koko_pi_agent.app import KokoApp
     from koko_pi_agent.driver import NoAltScreenDriver
 
-    app = MewCodeApp(
+    app = KokoApp(
         providers=config.providers,
         permission_mode=permission_mode,
         mcp_servers=config.mcp_servers,

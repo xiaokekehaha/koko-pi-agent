@@ -7,13 +7,13 @@ from koko_pi_agent.ui_state import UIStateStore
 
 def test_mascot_open_state_round_trips_and_preserves_other_state(tmp_path) -> None:
     path = tmp_path / "ui_state.json"
-    path.write_text(json.dumps({"theme": "mewcode"}), encoding="utf-8")
+    path.write_text(json.dumps({"theme": "koko"}), encoding="utf-8")
 
     store = UIStateStore(path)
     assert store.mascot_open is False
     assert store.set_mascot_open(True) is True
     assert UIStateStore(path).mascot_open is True
-    assert json.loads(path.read_text(encoding="utf-8"))["theme"] == "mewcode"
+    assert json.loads(path.read_text(encoding="utf-8"))["theme"] == "koko"
 
     assert store.set_mascot_open(False) is True
     assert UIStateStore(path).mascot_open is False

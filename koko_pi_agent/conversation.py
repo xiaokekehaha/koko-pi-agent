@@ -157,7 +157,7 @@ class ConversationManager:
         sections: list[str] = []
         if instructions:
             sections.append(
-                "# mewcodeMd\n"
+                "# kokoMd\n"
                 "Codebase and user instructions are shown below. "
                 "Be sure to adhere to these instructions. "
                 "IMPORTANT: These instructions OVERRIDE any default behavior "

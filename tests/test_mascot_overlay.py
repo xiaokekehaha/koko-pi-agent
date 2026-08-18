@@ -7,7 +7,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, OptionList, Static
 
 import koko_pi_agent.app as app_module
-from koko_pi_agent.app import ChatInput, MewCodeApp
+from koko_pi_agent.app import ChatInput, KokoApp
 from koko_pi_agent.config import ProviderConfig
 from koko_pi_agent.mascot_overlay import ASCII_MASCOT, CORGI_FRAMES, MascotOverlay
 from koko_pi_agent.ui_state import UIStateStore
@@ -21,7 +21,7 @@ class MascotTestApp(App[None]):
         yield MascotOverlay(id="mascot-overlay")
 
 
-class MewCodeMascotTestApp(MewCodeApp):
+class KokoMascotTestApp(KokoApp):
     CSS_PATH = str(Path(app_module.__file__).with_name("styles.tcss"))
 
     def __init__(self, ui_state_path: Path) -> None:
@@ -179,7 +179,7 @@ async def test_mascot_can_be_dragged_and_stays_inside_screen() -> None:
 async def test_slash_command_opens_mascot_and_close_restores_input_focus(
     tmp_path: Path,
 ) -> None:
-    app = MewCodeMascotTestApp(tmp_path / "ui_state.json")
+    app = KokoMascotTestApp(tmp_path / "ui_state.json")
     async with app.run_test(size=(80, 24)) as pilot:
         chat_input = app.query_one(ChatInput)
         chat_input.insert("/mascot")
@@ -202,7 +202,7 @@ async def test_open_mascot_restores_on_restart_until_explicitly_closed(
 ) -> None:
     state_path = tmp_path / "ui_state.json"
 
-    first_app = MewCodeMascotTestApp(state_path)
+    first_app = KokoMascotTestApp(state_path)
     async with first_app.run_test(size=(80, 24)) as pilot:
         chat_input = first_app.query_one(ChatInput)
         chat_input.insert("/mascot")
@@ -211,7 +211,7 @@ async def test_open_mascot_restores_on_restart_until_explicitly_closed(
         assert first_app.query_one(MascotOverlay).is_open is True
         assert UIStateStore(state_path).mascot_open is True
 
-    second_app = MewCodeMascotTestApp(state_path)
+    second_app = KokoMascotTestApp(state_path)
     async with second_app.run_test(size=(80, 24)) as pilot:
         overlay = second_app.query_one(MascotOverlay)
         chat_input = second_app.query_one(ChatInput)
@@ -224,7 +224,7 @@ async def test_open_mascot_restores_on_restart_until_explicitly_closed(
         assert overlay.is_open is False
         assert UIStateStore(state_path).mascot_open is False
 
-    third_app = MewCodeMascotTestApp(state_path)
+    third_app = KokoMascotTestApp(state_path)
     async with third_app.run_test(size=(80, 24)):
         assert third_app.query_one(MascotOverlay).is_open is False
 
@@ -237,7 +237,7 @@ async def test_auto_restore_keeps_provider_picker_focus(tmp_path: Path) -> None:
         ProviderConfig("one", "openai", "http://unused", "test"),
         ProviderConfig("two", "openai", "http://unused", "test"),
     ]
-    app = MewCodeApp(providers=providers, ui_state_path=state_path)
+    app = KokoApp(providers=providers, ui_state_path=state_path)
 
     async with app.run_test(size=(80, 24)) as pilot:
         overlay = app.query_one(MascotOverlay)
@@ -258,7 +258,7 @@ async def test_escape_closes_restored_mascot_and_persists_closed_state(
 ) -> None:
     state_path = tmp_path / "ui_state.json"
     UIStateStore(state_path).set_mascot_open(True)
-    app = MewCodeMascotTestApp(state_path)
+    app = KokoMascotTestApp(state_path)
 
     async with app.run_test(size=(80, 24)) as pilot:
         overlay = app.query_one(MascotOverlay)

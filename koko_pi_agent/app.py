@@ -735,8 +735,8 @@ class SubAgentBlock(Static, can_focus=True):
         self._render_done()
 
 
-_MEWCODE_THEME = Theme(
-    name="mewcode",
+_KOKO_THEME = Theme(
+    name="koko",
     primary="#875FFF",
     background="#1a1a1a",
     surface="#1a1a1a",
@@ -745,12 +745,12 @@ _MEWCODE_THEME = Theme(
 )
 
 
-class MewCodeApp(App):
+class KokoApp(App):
     CSS_PATH = "styles.tcss"
     TITLE = APP_NAME
     INLINE_PADDING = 0
     AUTO_FOCUS = "#chat-input"
-    theme = "mewcode"
+    theme = "koko"
     BINDINGS = [
         Binding("ctrl+c", "handle_ctrl_c", "Quit", priority=True),
         Binding("escape", "cancel", "Cancel", priority=True),
@@ -867,8 +867,8 @@ class MewCodeApp(App):
         yield MascotOverlay(id="mascot-overlay")
 
     async def on_mount(self) -> None:
-        self.register_theme(_MEWCODE_THEME)
-        self.theme = "mewcode"
+        self.register_theme(_KOKO_THEME)
+        self.theme = "koko"
         if len(self.providers) == 1:
             await self._select_provider(self.providers[0])
         else:

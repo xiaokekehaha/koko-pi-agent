@@ -5,7 +5,7 @@
 > - 案例定位：独立、可测试、不调用真实大模型的教学项目
 > - 对应思想：Definition / Provider / Consumer、依赖注入、注册表、可逆生命周期、配置组合
 
-> 继续阅读：如果要把这些学习概念应用到当前 MewCode，请看[《MewCode Runtime 迭代设计：参考 Pi，而不是实现 Mini Pi》](./mewcode-pi-inspired-runtime-design.md)。该文以 MewCode 为主体，是生产架构规划，不代表已经批准实施。
+> 继续阅读：如果要把这些学习概念应用到当前 Koko，请看[《Koko Runtime 迭代设计：参考 Pi，而不是实现 Mini Pi》](./koko-pi-inspired-runtime-design.md)。该文以 Koko 为主体，是生产架构规划，不代表已经批准实施。
 
 ## 1. 为什么设计这个案例
 
@@ -20,7 +20,7 @@ Cordis 和 DeepSeek Harness 展示的是一套成熟的插件运行时。直接�
 3. 注册表比大量 `if/elif` 好在哪里？
 4. 为什么注册能力时还要设计注销能力？
 5. 配置如何决定一个 Agent 最终拥有哪些工具？
-6. 这些概念在 MewCode 中分别对应哪些真实代码？
+6. 这些概念在 Koko 中分别对应哪些真实代码？
 
 ## 2. 学习目标与非目标
 
@@ -43,7 +43,7 @@ Cordis 和 DeepSeek Harness 展示的是一套成熟的插件运行时。直接�
 - 不实现自动扫描目录和动态 `import`。
 - 不实现并发、流式输出、MCP 或多 Agent。
 - 不实现 Cordis 式依赖图调度、热重载和 Session 隔离。
-- 不修改 MewCode 当前生产代码。
+- 不修改 Koko 当前生产代码。
 - 本轮不创建 `examples/mini_plugin_agent/` 下的任何源码；文中的代码仅是设计 Demo。
 
 这些能力会放在案例完成后的进阶路线中，避免同时学习太多概念。
@@ -779,7 +779,7 @@ tests/
 └── test_mini_agent_e2e.py
 ```
 
-教学案例放在 `examples/`，避免读者误以为它已经是 MewCode 的生产能力。测试仍放在仓库统一的 `tests/` 中。
+教学案例放在 `examples/`，避免读者误以为它已经是 Koko 的生产能力。测试仍放在仓库统一的 `tests/` 中。
 
 ### 6.1 `contracts.py`：只定义共同语言
 
@@ -1173,7 +1173,7 @@ class Planner(Protocol):
 
 ### 7.2 为什么第一版使用同步函数
 
-MewCode 的真实 `Tool.execute()` 是异步的，因为文件、Shell、网络和模型调用都可能等待 I/O。教学版先用同步函数，避免同时引入事件循环。完成基础版后，再把 `execute()` 升级为 `async def`。
+Koko 的真实 `Tool.execute()` 是异步的，因为文件、Shell、网络和模型调用都可能等待 I/O。教学版先用同步函数，避免同时引入事件循环。完成基础版后，再把 `execute()` 升级为 `async def`。
 
 ## 8. 案例二：实现两个 Provider
 
@@ -1672,11 +1672,11 @@ def test_runtime_rolls_back_when_mount_fails() -> None:
     assert events == ["start:first", "stop:first"]
 ```
 
-## 16. 与 MewCode 真实代码的对应关系
+## 16. 与 Koko 真实代码的对应关系
 
 完成教学案例后，再阅读以下文件：
 
-| 教学案例 | MewCode 真实位置 | 阅读重点 |
+| 教学案例 | Koko 真实位置 | 阅读重点 |
 | --- | --- | --- |
 | `contracts.py` 中的 `Tool` | `koko_pi_agent/tools/base.py` | 抽象基类、Pydantic 参数模型、异步执行、Tool schema |
 | `registry.py` | `koko_pi_agent/tools/__init__.py` | 注册、启停、延迟发现和不同协议的 schema |
@@ -1685,13 +1685,13 @@ def test_runtime_rolls_back_when_mount_fails() -> None:
 | `config.yaml` | `.koko/config.yaml` 与 `koko_pi_agent/config.py` | 配置加载、Provider 选择和默认值 |
 | 配置验证 | `koko_pi_agent/validator.py` | 启动前发现无效配置 |
 
-需要特别注意一个差异：教学版注册表遇到同名 Tool 会抛错；当前 MewCode 的 `ToolRegistry.register()` 会用新对象覆盖旧对象。教学版选择快速失败，是为了让新手更容易观察冲突并理解独占注册。不要把教学行为误认为当前生产实现。
+需要特别注意一个差异：教学版注册表遇到同名 Tool 会抛错；当前 Koko 的 `ToolRegistry.register()` 会用新对象覆盖旧对象。教学版选择快速失败，是为了让新手更容易观察冲突并理解独占注册。不要把教学行为误认为当前生产实现。
 
 ## 17. 关键设计决策
 
 ### 决策 1：案例独立于生产代码
 
-原因：学习者可以自由重构、故意制造错误，不影响 MewCode 正常运行。
+原因：学习者可以自由重构、故意制造错误，不影响 Koko 正常运行。
 
 代价：部分类型和注册逻辑会与生产代码重复。
 
@@ -1798,7 +1798,7 @@ self._tools[tool.name] = tool
 4. 如果 Planner 返回了未注册的工具名，错误应该在哪一层处理？
 5. 新增 `weather` Tool 需要修改哪些文件？哪些文件不应该修改？
 6. 当前设计距离 Cordis 的热重载还缺少哪些机制？
-7. 教学版与 MewCode 当前 `ToolRegistry.register()` 的冲突策略有什么不同？
+7. 教学版与 Koko 当前 `ToolRegistry.register()` 的冲突策略有什么不同？
 8. Context 树表达的关系与 Inject 依赖表达的关系有什么不同？
 9. Fiber 保存哪些“本次挂载”信息？为什么不能只在 Plugin 类上保存？
 10. Service 和提供这个 Service 的 Plugin 是同一个对象吗？

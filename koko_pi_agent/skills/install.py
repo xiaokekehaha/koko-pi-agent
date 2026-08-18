@@ -167,7 +167,7 @@ async def _list_contents(
     )
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "mewcode-install-skill",
+        "User-Agent": "koko-install-skill",
     }
     resp = await client.get(url, headers=headers)
     if resp.status_code == 403:
@@ -195,7 +195,7 @@ async def _fetch_blob(
     # 回退到 download_url
     if not entry.download_url:
         raise RuntimeError(f"no download_url for {entry.path}")
-    headers = {"User-Agent": "mewcode-install-skill"}
+    headers = {"User-Agent": "koko-install-skill"}
     resp = await client.get(entry.download_url, headers=headers)
     if resp.status_code != 200:
         raise RuntimeError(f"download {entry.download_url}: status {resp.status_code}")

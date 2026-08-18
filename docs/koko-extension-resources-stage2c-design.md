@@ -3,8 +3,8 @@
 > - 状态：Implemented v1.0，2C0–2C6 已完成并验证（见 §13）
 > - 日期：2026-08-17
 > - 前置条件：阶段 0 AgentLoop/ToolPipeline、阶段 1 ExtensionHost/AgentRuntime、阶段 2A RunControl、阶段 2B TurnPreparer 均已实施并验证
-> - 主路线：[Koko Runtime 迭代设计](./mewcode-pi-inspired-runtime-design.md)
-> - 前身：[ResourceScope 与 TaskSupervisor 候选设计（原阶段 2A 编号）](./mewcode-extension-resources-stage2a-design.md)
+> - 主路线：[Koko Runtime 迭代设计](./koko-pi-inspired-runtime-design.md)
+> - 前身：[ResourceScope 与 TaskSupervisor 候选设计（原阶段 2A 编号）](./koko-extension-resources-stage2a-design.md)
 > - 实施方法：设计先行，完整切片实现后补行为验证；不采用 red-green-refactor TDD
 
 ## 1. 结论

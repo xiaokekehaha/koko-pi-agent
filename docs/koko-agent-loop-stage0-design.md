@@ -1,8 +1,8 @@
-# MewCode 阶段 0 设计：统一 Agent Loop 与 Tool Execution Pipeline
+# Koko 阶段 0 设计：统一 Agent Loop 与 Tool Execution Pipeline
 
 > - 状态：Design v0.1，待评审
 > - 日期：2026-08-16
-> - 上位设计：[MewCode Runtime 迭代设计](./mewcode-pi-inspired-runtime-design.md)
+> - 上位设计：[Koko Runtime 迭代设计](./koko-pi-inspired-runtime-design.md)
 > - 参考阅读：[Pi Chapter 1](https://books.antinomie.org/pi/chapter/01)、[Pi Chapter 2](https://books.antinomie.org/pi/chapter/02)
 > - 当前边界：只设计和规划，不修改 `koko_pi_agent/` 生产源码
 
@@ -10,7 +10,7 @@
 
 在 ExtensionHost 之前增加一个阶段 0：
 
-> 保留当前 MewCode 的模型、Tool、Permission、Hook、Context、Memory、Session、Team 和 UI 能力；先把分叉的执行路径收敛成唯一 Agent Loop、唯一 Tool Pipeline 和明确的 AgentRun 生命周期。
+> 保留当前 Koko 的模型、Tool、Permission、Hook、Context、Memory、Session、Team 和 UI 能力；先把分叉的执行路径收敛成唯一 Agent Loop、唯一 Tool Pipeline 和明确的 AgentRun 生命周期。
 
 阶段 0 不实现 Mini Pi，不重写产品能力，也不引入外部插件。它解决三个更基础的问题：
 

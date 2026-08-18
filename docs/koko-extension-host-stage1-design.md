@@ -1,9 +1,9 @@
-# MewCode 阶段 1 设计：ExtensionHost 内置 Tool 纵向切片
+# Koko 阶段 1 设计：ExtensionHost 内置 Tool 纵向切片
 
 > - 状态：Implemented v1.0，Stage 1A–1F 已完成并验证
 > - 日期：2026-08-16
-> - 前置条件：[阶段 0：统一 Agent Loop 与 Tool Execution Pipeline](./mewcode-agent-loop-stage0-design.md)已完成
-> - 主路线：[MewCode Runtime 迭代设计](./mewcode-pi-inspired-runtime-design.md)
+> - 前置条件：[阶段 0：统一 Agent Loop 与 Tool Execution Pipeline](./koko-agent-loop-stage0-design.md)已完成
+> - 主路线：[Koko Runtime 迭代设计](./koko-pi-inspired-runtime-design.md)
 
 ## 1. 结论
 
@@ -318,7 +318,7 @@ ExtensionAPI 不暴露 Agent、ToolRegistry、Manager 字典或 AsyncExitStack�
 
 ### 8.4 为什么 Stage 1 不允许激活后动态注册
 
-Pi 允许 Extension 在启动后注册 Tool，但 MewCode Stage 1 还没有事件管道、Session replacement 和任务监管。现在开放动态注册会引入：
+Pi 允许 Extension 在启动后注册 Tool，但 Koko Stage 1 还没有事件管道、Session replacement 和任务监管。现在开放动态注册会引入：
 
 - Run 正在读取 Tool Schema 时的并发变更；
 - active API 的长期生命周期；

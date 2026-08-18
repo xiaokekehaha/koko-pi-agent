@@ -706,7 +706,7 @@ class TestConversationInjection:
         assert len(conv.history) == 2
         assert conv.history[0].content == "env info"
         assert "<system-reminder>" in conv.history[1].content
-        assert "mewcodeMd" in conv.history[1].content
+        assert "kokoMd" in conv.history[1].content
         assert "project rules" in conv.history[1].content
         assert "autoMemory" in conv.history[1].content
         assert "user prefs" in conv.history[1].content
@@ -724,7 +724,7 @@ class TestConversationInjection:
         conv.inject_long_term_memory("rules", "")
         assert len(conv.history) == 1
         assert "<system-reminder>" in conv.history[0].content
-        assert "mewcodeMd" in conv.history[0].content
+        assert "kokoMd" in conv.history[0].content
         assert "rules" in conv.history[0].content
 
     def test_inject_memories_only(self) -> None:
@@ -760,3 +760,40 @@ class TestMemoryExtraction:
         assert VALID_TYPES == {"user", "feedback", "project", "reference"}
         assert _USER_LEVEL_TYPES == {"user", "feedback"}
         assert _PROJECT_LEVEL_TYPES == {"project", "reference"}
+
+
+class TestRemoteMemoryDirOverride:
+    """KOKO_REMOTE_MEMORY_DIR 覆盖项目级记忆目录，旧名保持兼容。"""
+
+    def test_new_env_var_overrides_project_path(self, monkeypatch, tmp_path):
+        from koko_pi_agent.memory.auto_memory import get_auto_mem_path
+
+        monkeypatch.delenv("MEWCODE_REMOTE_MEMORY_DIR", raising=False)
+        monkeypatch.setenv("KOKO_REMOTE_MEMORY_DIR", str(tmp_path / "mem"))
+
+        assert get_auto_mem_path("/anywhere") == str(tmp_path / "mem") + "/"
+
+    def test_legacy_env_var_still_honoured(self, monkeypatch, tmp_path):
+        """改名前配置过 MEWCODE_REMOTE_MEMORY_DIR 的部署升级后不能失效。"""
+        from koko_pi_agent.memory.auto_memory import get_auto_mem_path
+
+        monkeypatch.delenv("KOKO_REMOTE_MEMORY_DIR", raising=False)
+        monkeypatch.setenv("MEWCODE_REMOTE_MEMORY_DIR", str(tmp_path / "legacy"))
+
+        assert get_auto_mem_path("/anywhere") == str(tmp_path / "legacy") + "/"
+
+    def test_new_env_var_wins_over_legacy(self, monkeypatch, tmp_path):
+        from koko_pi_agent.memory.auto_memory import get_auto_mem_path
+
+        monkeypatch.setenv("KOKO_REMOTE_MEMORY_DIR", str(tmp_path / "new"))
+        monkeypatch.setenv("MEWCODE_REMOTE_MEMORY_DIR", str(tmp_path / "old"))
+
+        assert get_auto_mem_path("/anywhere") == str(tmp_path / "new") + "/"
+
+    def test_falls_back_to_project_dir_without_env(self, monkeypatch, tmp_path):
+        from koko_pi_agent.memory.auto_memory import get_auto_mem_path
+
+        monkeypatch.delenv("KOKO_REMOTE_MEMORY_DIR", raising=False)
+        monkeypatch.delenv("MEWCODE_REMOTE_MEMORY_DIR", raising=False)
+
+        assert get_auto_mem_path(str(tmp_path)) == str(tmp_path / ".koko" / "memory") + "/"

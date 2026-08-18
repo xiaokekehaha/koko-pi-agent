@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from koko_pi_agent.app import ChatInput, MewCodeApp
+from koko_pi_agent.app import ChatInput, KokoApp
 from koko_pi_agent.client import LLMClient
 from koko_pi_agent.config import ProviderConfig
 from koko_pi_agent.extensions import ToolProfile, tool_names_for_profile
@@ -42,7 +42,7 @@ def test_chat_input_maps_alt_enter_to_follow_up() -> None:
 
 
 def test_tui_provider_initialization_is_awaitable() -> None:
-    assert inspect.iscoroutinefunction(MewCodeApp._select_provider)
+    assert inspect.iscoroutinefunction(KokoApp._select_provider)
 
 
 @pytest.mark.asyncio
@@ -59,7 +59,7 @@ async def test_tui_provider_owns_tui_profile_runtime(
         "koko_pi_agent.app.resolve_context_window",
         skip_context_resolution,
     )
-    app = MewCodeApp(
+    app = KokoApp(
         providers=[
             ProviderConfig(
                 name="test",
@@ -129,7 +129,7 @@ async def test_concurrent_provider_initialization_leaves_one_active_runtime(
         )
         for name in ("first", "second")
     ]
-    app = MewCodeApp(
+    app = KokoApp(
         providers=providers,
         enable_fork=False,
         ui_state_path=tmp_path / "ui-state.json",
@@ -181,7 +181,7 @@ async def test_tui_active_inputs_queue_without_mutating_conversation(
         "koko_pi_agent.app.resolve_context_window",
         skip_context_resolution,
     )
-    app = MewCodeApp(
+    app = KokoApp(
         providers=[
             ProviderConfig(
                 name="test",
@@ -243,7 +243,7 @@ async def test_tui_real_run_delivers_and_persists_steering_once(
         "koko_pi_agent.app.resolve_context_window",
         skip_context_resolution,
     )
-    app = MewCodeApp(
+    app = KokoApp(
         providers=[
             ProviderConfig(
                 name="test",
@@ -300,7 +300,7 @@ class _RecordingMCPManager:
 async def test_tui_stop_mcp_initialization_leaves_manager_to_runtime() -> None:
     """入口只停连接动作，manager 由 runtime-resources 关闭（2C5）。"""
 
-    app = MewCodeApp(providers=[])
+    app = KokoApp(providers=[])
     manager = _RecordingMCPManager()
     app.mcp_manager = manager
 
@@ -325,7 +325,7 @@ async def test_tui_stop_mcp_initialization_leaves_manager_to_runtime() -> None:
 async def test_tui_stop_mcp_initialization_does_not_swallow_own_cancellation() -> None:
     """asyncio.wait 而非 await task：本协程被取消时必须继续向上传播。"""
 
-    app = MewCodeApp(providers=[])
+    app = KokoApp(providers=[])
 
     async def never_finishes() -> None:
         await asyncio.Event().wait()
@@ -349,7 +349,7 @@ async def test_tui_stop_mcp_initialization_does_not_swallow_own_cancellation() -
 
 @pytest.mark.asyncio
 async def test_tui_stop_mcp_initialization_is_noop_without_task() -> None:
-    app = MewCodeApp(providers=[])
+    app = KokoApp(providers=[])
     app.mcp_manager = _RecordingMCPManager()
     app._mcp_init_task = None
 
