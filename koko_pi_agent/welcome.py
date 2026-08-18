@@ -13,7 +13,11 @@ import random
 from dataclasses import dataclass, field
 from typing import Literal
 
+from rich import box
+from rich.console import Group, RenderableType
+from rich.panel import Panel
 from rich.style import Style
+from rich.table import Table
 from rich.text import Text as RichText
 
 
@@ -165,3 +169,155 @@ def mcp_line(state: McpState) -> str | None:
     if state.auth_needed:
         return f"MCP · {state.auth_needed} needs auth · run /mcp"
     return f"MCP · {len(state.errors)} failed · run /mcp"
+
+
+# 布局选档阈值：宽档双栏，中档单栏堆叠，窄档三行无边框。
+WIDE_MIN_WIDTH = 100
+COMPACT_MIN_WIDTH = 70
+
+_ACCENT = "#D9843B"
+_BRIGHT = "#F5F0E8"
+_MUTED = "#8A8A8A"
+_BORDER = "#3A3A3A"
+_TITLE = "#875FFF"
+_WARN = "#E5A50A"
+
+_LEFT_COLUMN_WIDTH = 32
+_MASCOT_INDENT = 3
+
+
+def _indent(text: RichText, amount: int) -> RichText:
+    out = RichText(" " * amount)
+    out.append_text(text)
+    return out
+
+
+def _panel(body: RenderableType, ctx: WelcomeContext) -> Panel:
+    title = RichText(f" {ctx.app_name} v{ctx.app_version} ", style=f"bold {_TITLE}")
+    return Panel(
+        body,
+        title=title,
+        title_align="left",
+        box=box.ROUNDED,
+        border_style=_BORDER,
+        padding=(1, 2),
+    )
+
+
+def _identity_lines(ctx: WelcomeContext) -> list[RichText]:
+    lines = [RichText(f"{ctx.model} · {ctx.provider_name}", style=_MUTED)]
+    if ctx.work_dir:
+        lines.append(RichText(ctx.work_dir, style=_MUTED))
+    return lines
+
+
+def _render_wide(ctx: WelcomeContext) -> Panel:
+    left: list[RichText] = [
+        RichText(greeting(ctx), style=f"bold {_BRIGHT}"),
+        RichText(""),
+    ]
+    left += [_indent(line, _MASCOT_INDENT) for line in render_pixels(MASCOT_LARGE)]
+    left.append(RichText(""))
+    left += _identity_lines(ctx)
+
+    right: list[RichText] = [
+        RichText("Tips for getting started", style=f"bold {_ACCENT}")
+    ]
+    right += [RichText(f"  {tip}", style=_MUTED) for tip in pick_tips(3, ctx.tips_seed)]
+    right.append(RichText(""))
+    right.append(RichText("Session ready", style=f"bold {_ACCENT}"))
+    right.append(RichText("  " + " · ".join(readiness_parts(ctx)), style=_MUTED))
+    status = mcp_line(ctx.mcp)
+    if status:
+        right.append(RichText(f"  {status}", style=_MUTED))
+
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(width=_LEFT_COLUMN_WIDTH)
+    grid.add_column(ratio=1)
+    grid.add_row(Group(*left), Group(*right))
+    return _panel(grid, ctx)
+
+
+def _render_compact(ctx: WelcomeContext) -> Panel:
+    pixels = render_pixels(MASCOT_LARGE)
+    info: list[RichText] = [RichText(greeting(ctx), style=f"bold {_BRIGHT}")]
+    info += _identity_lines(ctx)
+    while len(info) < len(pixels):
+        info.append(RichText(""))
+
+    head = Table.grid(padding=(0, 2))
+    head.add_column(width=len(MASCOT_LARGE[0]))
+    head.add_column(ratio=1)
+    for pixel_line, info_line in zip(pixels, info):
+        head.add_row(pixel_line, info_line)
+
+    summary = " · ".join(readiness_parts(ctx))
+    status = mcp_line(ctx.mcp)
+    if status:
+        summary = f"{summary} · {status}"
+
+    body = Table.grid(padding=(0, 1))
+    body.add_column(width=6)
+    body.add_column(ratio=1)
+    body.add_row(
+        RichText("Tips", style=f"bold {_ACCENT}"),
+        RichText(
+            " · ".join(pick_tips(2, ctx.tips_seed)),
+            style=_MUTED,
+            overflow="ellipsis",
+            no_wrap=True,
+        ),
+    )
+    body.add_row(
+        RichText("Ready", style=f"bold {_ACCENT}"),
+        RichText(summary, style=_MUTED, overflow="ellipsis", no_wrap=True),
+    )
+    return _panel(Group(head, RichText(""), body), ctx)
+
+
+def _render_mini(ctx: WelcomeContext) -> RenderableType:
+    summary_parts = readiness_parts(ctx)[:2]
+    status = mcp_line(ctx.mcp)
+    if status:
+        summary_parts.append(status)
+
+    right = [
+        RichText(f"{ctx.app_name} v{ctx.app_version} · {ctx.model}", style=_BRIGHT),
+        RichText(ctx.work_dir or ctx.provider_name, style=_MUTED),
+        RichText(
+            " · ".join(summary_parts), style=_MUTED, overflow="ellipsis", no_wrap=True
+        ),
+    ]
+    grid = Table.grid(padding=(0, 2))
+    grid.add_column(width=len(MASCOT_MINI[0]))
+    grid.add_column(ratio=1)
+    for pixel_line, text_line in zip(render_pixels(MASCOT_MINI), right):
+        grid.add_row(pixel_line, text_line)
+    return grid
+
+
+def render_welcome(ctx: WelcomeContext, width: int) -> RenderableType:
+    """按终端宽度选档渲染欢迎卡片。宽度只在挂载时取一次，不随 resize 变化。"""
+    if width >= WIDE_MIN_WIDTH:
+        return _render_wide(ctx)
+    if width >= COMPACT_MIN_WIDTH:
+        return _render_compact(ctx)
+    return _render_mini(ctx)
+
+
+def render_mcp_warning(ctx: WelcomeContext) -> RichText | None:
+    """卡片下方那行黄色警告。只在 MCP 真的出问题时返回非 None。"""
+    state = ctx.mcp
+    if state.kind != "warning":
+        return None
+    line = RichText(" ⚠ ", style=f"bold {_WARN}")
+    if state.auth_needed:
+        count = state.auth_needed
+        noun = "server" if count == 1 else "servers"
+        verb = "needs" if count == 1 else "need"
+        line.append(f"{count} MCP {noun} {verb} authentication · run /mcp", style=_WARN)
+    else:
+        count = len(state.errors)
+        noun = "server" if count == 1 else "servers"
+        line.append(f"{count} MCP {noun} failed to connect · run /mcp", style=_WARN)
+    return line

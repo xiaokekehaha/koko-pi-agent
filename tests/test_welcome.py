@@ -13,8 +13,11 @@ from koko_pi_agent.welcome import (
     mcp_line,
     pick_tips,
     readiness_parts,
+    render_mcp_warning,
     render_pixels,
+    render_welcome,
 )
+from rich.console import Console
 
 
 def test_mascot_art_is_rectangular():
@@ -172,3 +175,89 @@ def test_mcp_line_prefers_auth_over_generic_failure():
 def test_mcp_line_reports_failures_when_no_auth_needed():
     state = McpState(kind="warning", errors=("a: boom", "b: boom"))
     assert mcp_line(state) == "MCP · 2 failed · run /mcp"
+
+
+def _lines(ctx: WelcomeContext, width: int) -> list[str]:
+    console = Console(width=width, record=True, color_system=None, legacy_windows=False)
+    console.print(render_welcome(ctx, width))
+    return console.export_text().splitlines()
+
+
+def test_wide_layout_has_both_columns():
+    text = "\n".join(_lines(_context(tips_seed=1, skills_count=12), 120))
+    assert "Tips for getting started" in text
+    assert "Session ready" in text
+    assert "╭" in text
+
+
+def test_wide_layout_shows_version_in_border_title():
+    text = "\n".join(_lines(_context(tips_seed=1), 120))
+    assert "Koko v0.3.1" in text
+
+
+def test_wide_layout_stays_within_height_budget():
+    lines = _lines(
+        _context(tips_seed=1, skills_count=12, mcp=McpState(kind="connecting")), 120
+    )
+    assert len([line for line in lines if line.strip()]) <= 14
+
+
+def test_compact_layout_collapses_headings():
+    text = "\n".join(_lines(_context(tips_seed=1, skills_count=12), 85))
+    assert "Tips" in text
+    assert "Ready" in text
+    assert "Tips for getting started" not in text
+    assert "╭" in text
+
+
+def test_mini_layout_is_three_borderless_lines():
+    lines = [line for line in _lines(_context(skills_count=12), 50) if line.strip()]
+    assert len(lines) == 3
+    assert "╭" not in "\n".join(lines)
+
+
+def test_mini_layout_omits_tips():
+    text = "\n".join(_lines(_context(tips_seed=1, skills_count=12), 50))
+    for tip in TIPS:
+        assert tip not in text
+
+
+def test_layout_boundaries_pick_expected_tier():
+    # 100 是宽档下界，99 落到中档；70 是中档下界，69 落到窄档。
+    assert "Tips for getting started" in "\n".join(_lines(_context(tips_seed=1), 100))
+    assert "Tips for getting started" not in "\n".join(_lines(_context(tips_seed=1), 99))
+    assert "╭" in "\n".join(_lines(_context(tips_seed=1), 70))
+    assert "╭" not in "\n".join(_lines(_context(tips_seed=1), 69))
+
+
+def test_all_tiers_survive_empty_context():
+    empty = _context(user_name=None, work_dir="")
+    for width in (120, 85, 50):
+        assert _lines(empty, width)
+
+
+def test_wide_layout_omits_mcp_line_when_unconfigured():
+    text = "\n".join(_lines(_context(tips_seed=1, mcp=McpState(kind="none")), 120))
+    assert "MCP" not in text
+
+
+def test_mcp_warning_is_none_unless_warning_kind():
+    for kind in ("none", "connecting", "ready"):
+        assert render_mcp_warning(_context(mcp=McpState(kind=kind))) is None
+
+
+def test_mcp_warning_reports_single_auth_server():
+    ctx = _context(mcp=McpState(kind="warning", auth_needed=1, errors=("sentry: auth",)))
+    warning = render_mcp_warning(ctx)
+    assert warning is not None
+    assert warning.plain == " ⚠ 1 MCP server needs authentication · run /mcp"
+
+
+def test_mcp_warning_pluralises_multiple_auth_servers():
+    ctx = _context(mcp=McpState(kind="warning", auth_needed=2, errors=("a", "b")))
+    assert render_mcp_warning(ctx).plain == " ⚠ 2 MCP servers need authentication · run /mcp"
+
+
+def test_mcp_warning_reports_connection_failures():
+    ctx = _context(mcp=McpState(kind="warning", errors=("a: boom",)))
+    assert render_mcp_warning(ctx).plain == " ⚠ 1 MCP server failed to connect · run /mcp"
