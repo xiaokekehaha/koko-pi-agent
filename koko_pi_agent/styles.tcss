@@ -2,13 +2,6 @@ Screen {
     layers: default mascot;
 }
 
-#title-bar {
-    dock: top;
-    width: 100%;
-    height: 3;
-    padding: 0 1;
-}
-
 /* --- Provider Selection --- */
 
 #provider-select {
@@ -154,6 +147,15 @@ Screen {
     padding: 0 1;
 }
 
+#cwd-label {
+    width: auto;
+    max-width: 40;
+    height: 1;
+    color: $text-muted;
+    padding: 0 1;
+    text-overflow: ellipsis;
+}
+
 #teammates-label {
     width: auto;
     height: 1;
@@ -268,4 +270,18 @@ AskUserDialog {
 
 #resume-content {
     padding: 0 0;
+}
+
+/* --- Welcome Card --- */
+
+#welcome-card {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
+}
+
+#welcome-warning {
+    width: 100%;
+    height: auto;
+    padding: 0 1;
 }

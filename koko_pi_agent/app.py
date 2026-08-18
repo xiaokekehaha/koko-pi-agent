@@ -107,6 +107,12 @@ from koko_pi_agent.worktree.cleanup import start_stale_cleanup_task
 from koko_pi_agent.worktree.manager import WorktreeManager
 from koko_pi_agent.commands.handlers.worktree import create_worktree_command
 from koko_pi_agent.teammate_tree import TeammateTree
+from koko_pi_agent.welcome import (
+    McpState,
+    WelcomeContext,
+    render_mcp_warning,
+    render_welcome,
+)
 
 if TYPE_CHECKING:
     from koko_pi_agent.askuser_dialog import InlineAskUserWidget
@@ -745,6 +751,39 @@ _KOKO_THEME = Theme(
 )
 
 
+def _shorten_path(path: str) -> str:
+    """把 home 前缀换成 ~，让路径在状态栏和卡片里都短一些。"""
+    if not path:
+        return ""
+    try:
+        return "~/" + str(Path(path).resolve().relative_to(Path.home()))
+    except (ValueError, OSError):
+        return path
+
+
+def _detect_user_name(work_dir: str) -> str | None:
+    """问候语里的称呼。配置文件没有这个字段，所以只能从 git 和环境变量猜。
+
+    git config 会 fork 一个 subprocess，设 1 秒超时避免拖慢启动；任何失败都静默降级。
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "config", "user.name"],
+            cwd=work_dir or None,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+        name = result.stdout.strip()
+        if name:
+            return name
+    except Exception:
+        pass
+    return os.environ.get("USER") or None
+
+
 class KokoApp(App):
     CSS_PATH = "styles.tcss"
     TITLE = APP_NAME
@@ -830,21 +869,12 @@ class KokoApp(App):
         self._teammate_timer = None
         # 记录本次会话是否曾退出过 Plan Mode，用于重入时注入提示
         self._has_exited_plan_mode: bool = False
-
-    @staticmethod
-    def _make_banner(model: str = "", work_dir: str = "") -> RichText:
-        t = RichText()
-        t.append(" /\\_____/\\  ", style="bold color(99)")
-        t.append(f"{APP_NAME} v{APP_VERSION}\n", style="color(242)")
-        t.append("(  o   o  ) ", style="bold color(99)")
-        t.append(f"{model}\n" if model else "\n", style="color(242)")
-        t.append(" \\   ^   /  ", style="bold color(99)")
-        t.append(work_dir, style="color(242)")
-        return t
+        # 开屏欢迎卡片：一次性渲染，宽度只在挂载时结算一次。
+        self._welcome_ctx: WelcomeContext | None = None
+        self._welcome_card: Static | None = None
+        self._welcome_width: int = 0
 
     def compose(self) -> ComposeResult:
-        yield Static(self._make_banner(), id="title-bar")
-
         if len(self.providers) > 1:
             with Vertical(id="provider-select"):
                 yield Static("Select a Provider", id="select-label")
@@ -860,6 +890,7 @@ class KokoApp(App):
             yield ChatInput(id="chat-input")
             with Horizontal(id="status-bar"):
                 yield Static("  default", id="mode-label")
+                yield Static("", id="cwd-label")
                 yield Static("", id="teammates-label")
                 yield Static("", id="model-label")
             yield CompletionPopup()
@@ -1149,9 +1180,7 @@ class KokoApp(App):
             self._mcp_init_task = asyncio.create_task(self._init_mcp())
 
         self.query_one("#model-label", Static).update(provider.model)
-        self.query_one("#title-bar", Static).update(
-            self._make_banner(provider.model, work_dir)
-        )
+        self.query_one("#cwd-label", Static).update(_shorten_path(work_dir))
         self._update_mode_label()
 
         select = self.query("#provider-select")
@@ -1169,6 +1198,107 @@ class KokoApp(App):
         self._notification_check_task = asyncio.create_task(
             self._start_notification_polling()
         )
+
+        self._mount_welcome_card(provider, work_dir)
+
+    def _build_welcome_context(
+        self, provider: ProviderConfig, work_dir: str
+    ) -> WelcomeContext:
+        mcp = McpState(kind="connecting") if self._mcp_server_configs else McpState()
+        return WelcomeContext(
+            app_name=APP_NAME,
+            app_version=APP_VERSION,
+            model=provider.model,
+            provider_name=provider.name,
+            work_dir=_shorten_path(work_dir),
+            user_name=_detect_user_name(work_dir),
+            is_returning=self._has_prior_sessions(),
+            skills_count=len(self.skill_loader.get_catalog()) if self.skill_loader else 0,
+            agents_count=len(self.agent_loader.list_agents()) if self.agent_loader else 0,
+            hooks_count=len(self.hook_engine.hooks) if self.hook_engine else 0,
+            memory_entries=(
+                len(self.memory_manager.get_memories()) if self.memory_manager else 0
+            ),
+            mcp=mcp,
+        )
+
+    def _has_prior_sessions(self) -> bool:
+        """本次会话之前有没有别的会话。
+
+        当前 session 在 `_select_provider_unlocked` 早期就 create() 了，直接判断
+        list() 非空会让 is_returning 恒为 True，所以必须按 id 排除自己。
+        """
+        if self.session_manager is None:
+            return False
+        current_id = self.session.session_id if self.session else None
+        try:
+            return any(meta.id != current_id for meta in self.session_manager.list())
+        except Exception:
+            return False
+
+    def _mount_welcome_card(self, provider: ProviderConfig, work_dir: str) -> None:
+        """挂开屏卡片。装饰性组件失败绝不能中断启动流程。"""
+        try:
+            ctx = self._build_welcome_context(provider, work_dir)
+            card = Static(id="welcome-card")
+            self._welcome_ctx = ctx
+            self._welcome_card = card
+            self.query_one("#chat-area", VerticalScroll).mount(card)
+            # #chat-area 刚从 display=False 切过来，此刻 size.width 还是 0，
+            # 等一帧再按真实宽度渲染。
+            self.call_after_refresh(self._render_welcome_card)
+        except Exception as exc:
+            log.debug("welcome card skipped: %s", exc)
+            self._welcome_ctx = None
+            self._welcome_card = None
+
+    def _render_welcome_card(self) -> None:
+        card = self._welcome_card
+        ctx = self._welcome_ctx
+        if card is None or ctx is None:
+            return
+        width = self.query_one("#chat-area").size.width or self.size.width or 80
+        self._welcome_width = width
+        card.update(render_welcome(ctx, width))
+
+    def _refresh_welcome_mcp(
+        self, server_count: int, tool_count: int, errors: list[str]
+    ) -> None:
+        """MCP 异步初始化完成后原地回填卡片。
+
+        卡片可能已经被 /clear 卸载，也可能已经滚出视野——两种情况下更新都是无害的，
+        所以不做可见性判断，只在引用为 None 时跳过。
+        """
+        ctx = self._welcome_ctx
+        card = self._welcome_card
+        if ctx is None or card is None:
+            return
+        if errors:
+            auth_needed = sum(1 for err in errors if "auth" in err.lower())
+            ctx.mcp = McpState(
+                kind="warning",
+                server_count=server_count,
+                tool_count=tool_count,
+                auth_needed=auth_needed,
+                errors=tuple(errors),
+            )
+        else:
+            ctx.mcp = McpState(
+                kind="ready", server_count=server_count, tool_count=tool_count
+            )
+        # 用挂载时结算的同一宽度重渲染，避免回填导致布局跳档。
+        card.update(render_welcome(ctx, self._welcome_width or 80))
+
+        warning = render_mcp_warning(ctx)
+        if warning is None:
+            return
+        existing = self.query("#welcome-warning")
+        if existing:
+            existing.first(Static).update(warning)
+        else:
+            self.query_one("#chat-area", VerticalScroll).mount(
+                Static(warning, id="welcome-warning"), after=card
+            )
 
     async def _resolve_context_window(self, provider: ProviderConfig) -> None:
         await resolve_context_window(provider)
@@ -1345,6 +1475,9 @@ class KokoApp(App):
     def _clear_chat(self) -> None:
         chat = self.query_one("#chat-area", VerticalScroll)
         chat.remove_children()
+        # 卡片随对话一起被清掉了，别让 MCP 回填去更新已卸载的 widget。
+        self._welcome_card = None
+        self._welcome_ctx = None
 
     async def _dispatch_command(
         self,
@@ -2219,6 +2352,7 @@ class KokoApp(App):
         tools_after = len(self.registry.list_tools())
         mcp_tools = tools_after - tools_before
         server_count = len(connect_result.servers)
+        self._refresh_welcome_mcp(server_count, mcp_tools, list(connect_result.errors))
         if server_count > 0 and mcp_tools > 0:
             # 构建 MCP 指令，从 InitializeResult 提取 instructions
             parts = []
