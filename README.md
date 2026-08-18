@@ -2,7 +2,7 @@
 
 终端里的 AI 编程助手。基于 Python + [Textual](https://textual.textualize.io/) 构建，提供交互式 TUI、非交互式单次执行、浏览器远程模式三种前端，并内置多 Agent 团队协作能力。
 
-![Koko 交互式 TUI —— 启动时的欢迎卡片显示当前模型、工作目录、可用 Skill 与会话状态，右侧是可拖拽的 ASCII 柯基](docs/images/screenshot-tui.png)
+![Koko 交互式 TUI —— 启动时的欢迎卡片显示当前模型、工作目录、可用 Skill 与会话状态，右侧是可拖拽的 ASCII 柯基](docs/images/screenshot-tui.jpg)
 
 <p align="center"><sub>启动时的一次性欢迎卡片：当前 provider 与模型、工作目录、上手提示、会话状态（Agent 数 / MCP server 与工具数）。右侧那只可拖拽的柯基来自 <code>/mascot</code>。</sub></p>
 
