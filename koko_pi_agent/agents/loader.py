@@ -6,12 +6,30 @@ import importlib.resources
 import logging
 from pathlib import Path
 
-from koko_pi_agent.agents.parser import AgentDef, AgentParseError, parse_agent_file
+from koko_pi_agent.agents.builtins import BUILTIN_AGENT_FILES
+from koko_pi_agent.agents.parser import (
+    AgentDef,
+    AgentParseError,
+    _validate_agent_meta,
+    parse_agent_file,
+    parse_frontmatter,
+)
 
 log = logging.getLogger(__name__)
 
 PROJECT_AGENTS_DIR = ".koko/agents"
 USER_AGENTS_DIR = "~/.koko/agents"
+
+BUILTINS_PACKAGE = "koko_pi_agent.agents.builtins"
+
+
+class BuiltinAgentError(RuntimeError):
+    """内置 agent 定义缺失或损坏。
+
+    这一层是随包分发的，出问题只可能是打包错误或误删，不是用户输入问题，
+    所以直接抛出而不是降级成空列表——静默降级会让 Explore/Plan/Verification
+    等内建类型悄悄消失，而调用方（AgentTool、团队协调 prompt）仍在引用它们。
+    """
 
 
 class AgentLoader:
@@ -46,46 +64,56 @@ class AgentLoader:
 
 
     def _load_builtins(self) -> list[AgentDef]:
-        results: list[AgentDef] = []
+        """按 BUILTIN_AGENT_FILES 清单加载内置 agent。
+
+        不遍历目录而是照清单取文件：目录里少了什么，这里才能发现。
+        """
         try:
-            builtins_pkg = importlib.resources.files("koko_pi_agent.agents.builtins")
-        except (ModuleNotFoundError, TypeError):
-            log.warning("Could not load built-in agents package")
-            return results
+            builtins_pkg = importlib.resources.files(BUILTINS_PACKAGE)
+        except (ModuleNotFoundError, TypeError) as e:
+            raise BuiltinAgentError(
+                f"内置 agent 包 {BUILTINS_PACKAGE} 无法加载，安装不完整"
+            ) from e
 
-        for item in builtins_pkg.iterdir():
-            if not item.name.endswith(".md"):
-                continue
-            try:
-                raw = item.read_text(encoding="utf-8")
-                from koko_pi_agent.agents.parser import parse_frontmatter, _validate_agent_meta
-
-                meta, body = parse_frontmatter(raw)
-                _validate_agent_meta(meta, item.name)
-
-                agent_def = AgentDef(
-                    agent_type=meta["name"],
-                    when_to_use=meta["description"],
-                    system_prompt=body,
-                    tools=meta.get("tools", []),
-                    disallowed_tools=meta.get("disallowedTools", []),
-                    model=str(meta.get("model", "inherit")),
-                    max_turns=meta.get("maxTurns") or 200,  # 未指定时默认 200
-                    permission_mode=str(meta.get("permissionMode", "default")),
-                    background=bool(meta.get("background", False)),
-                    file_path=None,
-                    source="builtin",
+        results: list[AgentDef] = []
+        for filename in BUILTIN_AGENT_FILES:
+            item = builtins_pkg / filename
+            if not item.is_file():
+                raise BuiltinAgentError(
+                    f"内置 agent 定义 {filename} 缺失。它在 "
+                    f"{BUILTINS_PACKAGE}.BUILTIN_AGENT_FILES 中声明——"
+                    f"要么恢复该文件，要么把它从清单里移除。"
                 )
 
-                if (
-                    agent_def.agent_type == "Verification"
-                    and not self._enable_verification
-                ):
-                    continue
+            try:
+                meta, body = parse_frontmatter(item.read_text(encoding="utf-8"))
+                _validate_agent_meta(meta, filename)
+            except (AgentParseError, OSError) as e:
+                raise BuiltinAgentError(f"内置 agent {filename} 无效：{e}") from e
 
-                results.append(agent_def)
-            except (AgentParseError, Exception) as e:
-                log.warning("Skipping built-in agent %s: %s", item.name, e)
+            agent_def = AgentDef(
+                agent_type=meta["name"],
+                when_to_use=meta["description"],
+                system_prompt=body,
+                tools=meta.get("tools", []),
+                disallowed_tools=meta.get("disallowedTools", []),
+                model=str(meta.get("model", "inherit")),
+                max_turns=meta.get("maxTurns") or 200,  # 未指定时默认 200
+                permission_mode=str(meta.get("permissionMode", "default")),
+                background=bool(meta.get("background", False)),
+                isolation=str(meta.get("isolation", "")),
+                # 内置定义随包分发，不参与 get() 的热重载
+                file_path=None,
+                source="builtin",
+            )
+
+            if (
+                agent_def.agent_type == "Verification"
+                and not self._enable_verification
+            ):
+                continue
+
+            results.append(agent_def)
 
         return results
 

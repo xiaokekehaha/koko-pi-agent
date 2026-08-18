@@ -1,11 +1,11 @@
-# MewCode 候选设计：ResourceScope 与 TaskSupervisor（原阶段 2A）
+# Koko 候选设计：ResourceScope 与 TaskSupervisor（原阶段 2A）
 
 > 路线状态更新（2026-08-16）：在补充 Agent Loop 材料并对照 TUI/Remote/Core 的运行中输入行为后，当前阶段 2A 已改为 `RunControl`。本文设计证据和 Interface 继续保留，但实施顺延到候选阶段 2C；文内 2A0–2A5 是原批次编号，真正开发前统一重编号并重新审批。
 
 > - 状态：Design v1.0，等待开发授权
 > - 日期：2026-08-16
-> - 前置条件：[阶段 1：ExtensionHost 内置 Tool 纵向切片](./mewcode-extension-host-stage1-design.md)已完成
-> - 主路线：[MewCode Runtime 迭代设计](./mewcode-pi-inspired-runtime-design.md)
+> - 前置条件：[阶段 1：ExtensionHost 内置 Tool 纵向切片](./koko-extension-host-stage1-design.md)已完成
+> - 主路线：[Koko Runtime 迭代设计](./koko-pi-inspired-runtime-design.md)
 > - 实施方法：设计先行，完整切片实现后补行为验证；不采用 red-green-refactor TDD
 
 ## 1. 结论
@@ -612,8 +612,8 @@ provider 切换和 App 退出只关闭 Runtime；TaskSupervisor 负责 cancel、
 ```bash
 .venv/bin/pytest tests/test_extension_resources.py tests/test_extensions.py tests/test_runtime_composition.py tests/test_tui_runtime_adapter.py tests/test_remote_runtime_adapter.py tests/test_teammate_registry.py tests/test_mcp.py tests/test_agent_runtime.py tests/test_tool_pipeline.py tests/test_agent.py -q
 .venv/bin/pytest -q
-uvx ruff check --select E9,F63,F7,F82 mewcode tests
-.venv/bin/python -m compileall -q mewcode tests
+uvx ruff check --select E9,F63,F7,F82 koko_pi_agent tests
+.venv/bin/python -m compileall -q koko_pi_agent tests
 git diff --check
 ```
 

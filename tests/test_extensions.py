@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from koko_pi_agent.extensions import (
     DuplicateExtensionIdError,
     ExtensionCatalog,
+    ExtensionCloseError,
     ExtensionDefinition,
     ExtensionHost,
     ExtensionPhaseError,
@@ -344,3 +345,210 @@ async def test_cancelled_activation_rolls_back_and_preserves_cancellation() -> N
         )
 
     assert registry.list_tools() == []
+
+
+def _open_request(
+    registry: ToolRegistry,
+    *,
+    runtime_id: str = "runtime-a",
+    profile: ToolProfile = ToolProfile.PROMPT_LEAD,
+) -> OpenExtensionSession:
+    return OpenExtensionSession(
+        context=SessionContext(
+            runtime_id=runtime_id,
+            generation=1,
+            work_dir="/tmp/project",
+            profile=profile,
+        ),
+        registry=registry,
+        bindings=object(),
+    )
+
+
+def _single_host(installer, *, critical: bool = True) -> ExtensionHost:
+    return ExtensionHost(
+        ExtensionCatalog(
+            [
+                ExtensionDefinition(
+                    extension_id="test.resources",
+                    display_name="Resource test extension",
+                    source="test://resources",
+                    installer=installer,
+                    critical=critical,
+                )
+            ]
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_api_owns_resources_and_tasks_with_correct_close_order() -> None:
+    order: list[str] = []
+    started = asyncio.Event()
+
+    class _Connection:
+        def __enter__(self) -> str:
+            return "connection"
+
+        def __exit__(self, *exc_info: object) -> None:
+            order.append("resource")
+
+    async def forever() -> None:
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            order.append("task")
+            raise
+
+    async def install(api, _bindings) -> None:
+        api.register_tool(_NamedTool("Owned"))
+        assert await api.acquire("connection", _Connection()) == "connection"
+        api.defer("legacy-shutdown", lambda: order.append("deferred"))
+        handle = api.start_task("forever", forever())
+        assert handle.name == "forever"
+        assert handle.extension_id == "test.resources"
+        assert handle.status == "running"
+
+    registry = ToolRegistry()
+    session = await _single_host(install).open_session(_open_request(registry))
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    assert registry.get("Owned") is not None
+
+    await session.aclose()
+
+    # contribution 先撤销，然后 task，最后 resource（deferred 后登记故先关）
+    assert order == ["task", "deferred", "resource"]
+    assert registry.list_contributions() == ()
+    assert session.state == "closed"
+
+
+@pytest.mark.asyncio
+async def test_session_close_aggregates_cleanup_failures_and_still_closes() -> None:
+    def boom() -> None:
+        raise RuntimeError("shutdown exploded")
+
+    cleaned: list[str] = []
+
+    def install(api, _bindings) -> None:
+        api.defer("healthy", lambda: cleaned.append("healthy"))
+        api.defer("broken", boom)
+
+    registry = ToolRegistry()
+    session = await _single_host(install).open_session(_open_request(registry))
+
+    with pytest.raises(ExtensionCloseError) as excinfo:
+        await session.aclose()
+
+    assert session.state == "closed"
+    assert cleaned == ["healthy"]
+    assert [failure.name for failure in excinfo.value.failures] == ["broken"]
+    assert "shutdown exploded" in str(excinfo.value)
+    assert [
+        diagnostic.status
+        for diagnostic in session.diagnostics
+        if diagnostic.status == "cleanup_failed"
+    ] == ["cleanup_failed"]
+
+
+@pytest.mark.asyncio
+async def test_api_rejects_every_registration_after_activation() -> None:
+    captured: list[object] = []
+
+    def install(api, _bindings) -> None:
+        captured.append(api)
+
+    registry = ToolRegistry()
+    session = await _single_host(install).open_session(_open_request(registry))
+    api = captured[0]
+
+    with pytest.raises(ExtensionPhaseError):
+        api.register_tool(_NamedTool("Late"))
+    with pytest.raises(ExtensionPhaseError):
+        api.defer("late", lambda: None)
+    with pytest.raises(ExtensionPhaseError):
+        await api.acquire("late", None)
+
+    late_coroutine = asyncio.sleep(0)
+    try:
+        with pytest.raises(ExtensionPhaseError):
+            api.start_task("late", late_coroutine)
+    finally:
+        late_coroutine.close()
+
+    await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_activation_failure_rolls_back_resources_and_tasks() -> None:
+    order: list[str] = []
+    started = asyncio.Event()
+
+    async def forever() -> None:
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            order.append("task")
+            raise
+
+    async def install(api, _bindings) -> None:
+        api.register_tool(_NamedTool("Doomed"))
+        api.defer("resource", lambda: order.append("resource"))
+        api.start_task("forever", forever())
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        raise RuntimeError("installer failed after registering resources")
+
+    registry = ToolRegistry()
+
+    with pytest.raises(ExtensionStartupError):
+        await _single_host(install).open_session(_open_request(registry))
+
+    assert order == ["task", "resource"]
+    assert registry.list_tools() == []
+
+
+@pytest.mark.asyncio
+async def test_two_sessions_own_separate_resource_scopes() -> None:
+    closed: list[str] = []
+
+    def install(api, _bindings) -> None:
+        api.defer("resource", lambda: closed.append(api.context.runtime_id))
+
+    host = _single_host(install)
+    registry_a = ToolRegistry()
+    registry_b = ToolRegistry()
+    session_a = await host.open_session(_open_request(registry_a, runtime_id="runtime-a"))
+    session_b = await host.open_session(_open_request(registry_b, runtime_id="runtime-b"))
+
+    await session_a.aclose()
+    assert closed == ["runtime-a"]
+    assert session_b.state == "active"
+
+    await session_b.aclose()
+    assert closed == ["runtime-a", "runtime-b"]
+
+
+@pytest.mark.asyncio
+async def test_background_task_failure_is_visible_while_session_is_active() -> None:
+    async def explode() -> None:
+        raise ValueError("background task exploded")
+
+    def install(api, _bindings) -> None:
+        api.start_task("exploding", explode())
+
+    registry = ToolRegistry()
+    session = await _single_host(install).open_session(_open_request(registry))
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    failed = [item for item in session.diagnostics if item.status == "task_failed"]
+    assert len(failed) == 1
+    assert failed[0].name == "exploding"
+    assert failed[0].kind == "task"
+    assert "background task exploded" in failed[0].error
+    # 后台任务失败只让 Runtime degraded，不自动关闭 Session
+    assert session.state == "active"
+
+    await session.aclose()

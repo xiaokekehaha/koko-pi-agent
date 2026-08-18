@@ -14,15 +14,15 @@ log = logging.getLogger(__name__)
 SESSION_FILENAME = "worktree_session.json"
 
 
-def _session_path(mewcode_dir: Path) -> Path:
-    return mewcode_dir / SESSION_FILENAME
+def _session_path(koko_dir: Path) -> Path:
+    return koko_dir / SESSION_FILENAME
 
 
 def save_worktree_session(
-    mewcode_dir: Path,
+    koko_dir: Path,
     session: WorktreeSession | None,
 ) -> None:
-    path = _session_path(mewcode_dir)
+    path = _session_path(koko_dir)
     if session is None:
         # 传入 nil 时直接删除文件而非写空 JSON，
         # 避免遗留无意义的空文件。文件不存在时静默忽略。
@@ -41,8 +41,8 @@ def save_worktree_session(
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def load_worktree_session(mewcode_dir: Path) -> WorktreeSession | None:
-    path = _session_path(mewcode_dir)
+def load_worktree_session(koko_dir: Path) -> WorktreeSession | None:
+    path = _session_path(koko_dir)
     if not path.exists():
         return None
     try:

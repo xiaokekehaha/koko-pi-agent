@@ -537,7 +537,7 @@ private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promi
 
 ---
 
-## 7. 对 MewCode 的启发
+## 7. 对 Koko 的启发
 
 | 做法 | 值不值得抄 |
 | --- | --- |
@@ -549,7 +549,7 @@ private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promi
 | **项目信任前只加载全局扩展，且信任决策可被扩展接管** | 值，尤其是团队共享 `.koko/` 配置的场景 |
 | 资源清理（定时器/连接）完全交给扩展自己 | **不建议照抄**。Python 有 `AsyncExitStack` 和 `TaskGroup`，做自动清理的成本远低于 TS。设计文档里的 `ResourceScope` + `TaskSupervisor` 方向比 pi 更稳 |
 
-最后一条是这次对照里唯一「MewCode 应该比 pi 做得更多」的地方。pi 选择不做资源追踪是 TypeScript 生态的现实约束；Python 的 `async with` + `AsyncExitStack` 能用几十行拿到确定性的逆序清理，没有理由放弃。
+最后一条是这次对照里唯一「Koko 应该比 pi 做得更多」的地方。pi 选择不做资源追踪是 TypeScript 生态的现实约束；Python 的 `async with` + `AsyncExitStack` 能用几十行拿到确定性的逆序清理，没有理由放弃。
 
 ---
 

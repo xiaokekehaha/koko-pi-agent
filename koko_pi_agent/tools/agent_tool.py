@@ -494,7 +494,7 @@ class AgentTool(Tool):
                 ),
             )
 
-        # 构造把本 mewcode 拉起为队友 worker 模式的命令，cd 到该队友的 worktree
+        # 构造把本 koko 拉起为队友 worker 模式的命令，cd 到该队友的 worktree
         cli_command = build_teammate_cli(p.team_name, teammate_name, wt.path)
 
         try:

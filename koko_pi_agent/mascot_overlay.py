@@ -139,7 +139,7 @@ class MascotOverlay(Vertical, can_focus=True):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="mascot-header"):
-            yield MascotText("MewCode corgi", id="mascot-title")
+            yield MascotText("Koko corgi", id="mascot-title")
             yield Button(
                 "x",
                 id="mascot-close",

@@ -3,7 +3,7 @@
 
 """记忆治理 E2E 测试。
 
-需要环境变量 MEWCODE_TEST_API_KEY、MEWCODE_TEST_BASE_URL、MEWCODE_TEST_MODEL。
+需要环境变量 KOKO_TEST_API_KEY、KOKO_TEST_BASE_URL、KOKO_TEST_MODEL。
 运行：pytest tests/test_consolidation.py -v -s
 """
 import asyncio
@@ -132,14 +132,14 @@ def test_prompt_contains_all_phases():
 # =========================================================================
 
 @pytest.mark.skipif(
-    not os.environ.get("MEWCODE_TEST_API_KEY"),
-    reason="MEWCODE_TEST_API_KEY not set"
+    not os.environ.get("KOKO_TEST_API_KEY"),
+    reason="KOKO_TEST_API_KEY not set"
 )
 @pytest.mark.timeout(120)
 def test_e2e_consolidation_merges_duplicates():
-    api_key = os.environ["MEWCODE_TEST_API_KEY"]
-    base_url = os.environ.get("MEWCODE_TEST_BASE_URL", "https://api.minimaxi.com/v1")
-    model = os.environ.get("MEWCODE_TEST_MODEL", "MiniMax-M3")
+    api_key = os.environ["KOKO_TEST_API_KEY"]
+    base_url = os.environ.get("KOKO_TEST_BASE_URL", "https://api.minimaxi.com/v1")
+    model = os.environ.get("KOKO_TEST_MODEL", "MiniMax-M3")
 
     with tempfile.TemporaryDirectory() as work_dir:
         mem_dir = os.path.join(work_dir, ".koko", "memory")

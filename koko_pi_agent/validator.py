@@ -1,6 +1,6 @@
 # Koko Pi Agent
 # 项目地址：https://github.com/xiaokekehaha/koko-pi-agent
-"""MewCode 的配置校验逻辑。"""
+"""Koko 的配置校验逻辑。"""
 
 from __future__ import annotations
 

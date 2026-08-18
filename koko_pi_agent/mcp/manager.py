@@ -26,6 +26,19 @@ class ServerInfo:
 
 
 @dataclass
+class ServerStatus:
+    """单个 MCP 服务器的当前状态。
+
+    连接失败的服务器也会保留一条记录，这样 /mcp 能把失败原因显示出来，
+    用户可以直接重连，而不必重启整个会话。
+    """
+    name: str
+    connected: bool = False
+    error: str = ""
+    tool_count: int = 0
+
+
+@dataclass
 class ConnectResult:
     """ConnectAll 的返回结果，包含已注册工具、服务器信息和错误列表。"""
     tools: list[Tool] = field(default_factory=list)
@@ -39,7 +52,9 @@ class MCPManager:
     def __init__(self) -> None:
         self._configs: dict[str, MCPServerConfig] = {}
         self._clients: dict[str, MCPClient] = {}
-        self._registration_handles: list[RegistrationHandle] = []
+        self._statuses: dict[str, ServerStatus] = {}
+        # 按 server 分组：重连时要能只撤销这一个 server 的旧注册
+        self._handles_by_server: dict[str, list[RegistrationHandle]] = {}
 
 
     def load_configs(self, configs: list[MCPServerConfig]) -> None:
@@ -70,10 +85,17 @@ class MCPManager:
                     result.tools.append(wrapper)
                     logger.info("Registered MCP tool: %s", wrapper.name)
 
+                self._statuses[name] = ServerStatus(
+                    name=name, connected=True, tool_count=len(tools)
+                )
+
             except Exception as e:
                 msg = f"MCP server '{name}': {e}"
                 logger.warning(msg)
                 result.errors.append(msg)
+                self._statuses[name] = ServerStatus(
+                    name=name, connected=False, error=str(e)
+                )
 
         return result
 
@@ -85,18 +107,6 @@ class MCPManager:
         获取每个服务器的 instructions。
         """
         result = await self.connect_all()
-        runtime_identity = {
-            (
-                contribution.owner.runtime_id,
-                contribution.owner.generation,
-            )
-            for contribution in registry.list_contributions()
-            if contribution.owner.runtime_id
-        }
-        if len(runtime_identity) == 1:
-            runtime_id, generation = next(iter(runtime_identity))
-        else:
-            runtime_id, generation = "", 0
         handles_by_server: dict[str, list[RegistrationHandle]] = {}
         registered_tools: list[Tool] = []
         failed_servers: set[str] = set()
@@ -108,12 +118,7 @@ class MCPManager:
             )
             if server_name in failed_servers:
                 continue
-            owner = ContributionOwner(
-                extension_id=f"mcp.{server_name}",
-                source=f"mcp:{server_name}",
-                runtime_id=runtime_id,
-                generation=generation,
-            )
+            owner = self._owner_for(server_name, registry)
             try:
                 handle = registry.register(tool, owner=owner)
             except Exception as error:
@@ -121,7 +126,6 @@ class MCPManager:
                 server_handles = handles_by_server.pop(server_name, [])
                 for registered_handle in reversed(server_handles):
                     registered_handle.close()
-                    self._registration_handles.remove(registered_handle)
                 registered_tools = [
                     registered_tool
                     for registered_tool in registered_tools
@@ -135,12 +139,109 @@ class MCPManager:
                 message = f"MCP server '{server_name}' tool registration: {error}"
                 logger.warning(message)
                 result.errors.append(message)
+                status = self._statuses.get(server_name)
+                if status is not None:
+                    status.error = str(error)
+                    status.tool_count = 0
                 continue
             handles_by_server.setdefault(server_name, []).append(handle)
-            self._registration_handles.append(handle)
             registered_tools.append(tool)
         result.tools = registered_tools
+        for server_name, handles in handles_by_server.items():
+            self._handles_by_server.setdefault(server_name, []).extend(handles)
+            status = self._statuses.get(server_name)
+            if status is not None:
+                status.tool_count = len(handles)
         return result
+
+    def _owner_for(self, server_name: str, registry: ToolRegistry) -> ContributionOwner:
+        runtime_identity = {
+            (contribution.owner.runtime_id, contribution.owner.generation)
+            for contribution in registry.list_contributions()
+            if contribution.owner.runtime_id
+        }
+        if len(runtime_identity) == 1:
+            runtime_id, generation = next(iter(runtime_identity))
+        else:
+            runtime_id, generation = "", 0
+        return ContributionOwner(
+            extension_id=f"mcp.{server_name}",
+            source=f"mcp:{server_name}",
+            runtime_id=runtime_id,
+            generation=generation,
+        )
+
+    def _release_server(self, name: str) -> None:
+        """撤销某个 server 已注册的全部工具。"""
+        for handle in reversed(self._handles_by_server.pop(name, [])):
+            handle.close()
+
+    async def reconnect(
+        self, name: str, registry: ToolRegistry
+    ) -> ServerStatus | None:
+        """重连单个 MCP 服务器并重新注册它的工具。
+
+        返回新的状态；服务器名未配置时返回 None。连接失败不抛异常——
+        失败原因写进 ServerStatus.error，调用方负责展示。
+        """
+        config = self._configs.get(name)
+        if config is None:
+            return None
+
+        self._release_server(name)
+        old_client = self._clients.pop(name, None)
+        if old_client is not None:
+            try:
+                await old_client.close()
+            except Exception:
+                logger.debug("Error closing MCP server '%s'", name, exc_info=True)
+
+        client = MCPClient(config)
+        try:
+            await client.connect()
+            tool_defs = await client.list_tools()
+        except Exception as error:
+            logger.warning("MCP server '%s' reconnect failed: %s", name, error)
+            status = ServerStatus(name=name, connected=False, error=str(error))
+            self._statuses[name] = status
+            return status
+
+        self._clients[name] = client
+        handles: list[RegistrationHandle] = []
+        owner = self._owner_for(name, registry)
+        for tool_def in tool_defs:
+            wrapper = MCPToolWrapper(name, tool_def, client)
+            try:
+                handles.append(registry.register(wrapper, owner=owner))
+            except Exception as error:
+                for handle in reversed(handles):
+                    handle.close()
+                message = f"tool registration: {error}"
+                logger.warning("MCP server '%s' %s", name, message)
+                status = ServerStatus(name=name, connected=True, error=message)
+                self._statuses[name] = status
+                return status
+
+        self._handles_by_server[name] = handles
+        status = ServerStatus(name=name, connected=True, tool_count=len(handles))
+        self._statuses[name] = status
+        logger.info("MCP server '%s' reconnected, %d tools", name, len(handles))
+        return status
+
+    def server_names(self) -> list[str]:
+        """所有已配置的 server 名（含从未连上的）。"""
+        return list(self._configs)
+
+    def get_status(self, name: str) -> ServerStatus | None:
+        return self._statuses.get(name)
+
+    def list_status(self) -> list[ServerStatus]:
+        """按配置顺序返回所有已知 server 的状态（含失败的）。"""
+        return [
+            self._statuses[name]
+            for name in self._configs
+            if name in self._statuses
+        ]
 
 
     async def get_client(self, name: str) -> MCPClient | None:
@@ -165,13 +266,22 @@ class MCPManager:
 
 
     async def shutdown(self) -> None:
-        for handle in reversed(self._registration_handles):
+        all_handles = [
+            handle
+            for handles in self._handles_by_server.values()
+            for handle in handles
+        ]
+        for handle in reversed(all_handles):
             handle.close()
-        self._registration_handles.clear()
+        self._handles_by_server.clear()
         for name, client in self._clients.items():
             try:
                 await client.close()
                 logger.info("MCP server '%s' closed", name)
             except Exception:
                 logger.debug("Error closing MCP server '%s'", name, exc_info=True)
+            status = self._statuses.get(name)
+            if status is not None:
+                status.connected = False
+                status.tool_count = 0
         self._clients.clear()

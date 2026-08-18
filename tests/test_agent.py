@@ -94,7 +94,7 @@ async def test_single_step_tool_call():
         # 第 1 轮：模型调用 ReadFile
         [
             TextDelta("Let me read the file."),
-            ToolCallComplete("t1", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t1", "ReadFile", {"file_path": "KOKO.md"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=20),
         ],
         # 第 2 轮：模型给出最终答案
@@ -106,7 +106,7 @@ async def test_single_step_tool_call():
     registry = create_default_registry()
     agent = Agent(client, registry, "anthropic", work_dir=".")
     conv = ConversationManager()
-    conv.add_user_message("Read MEWCODE.md")
+    conv.add_user_message("Read KOKO.md")
 
     events = []
     async for e in agent.run(conv):
@@ -128,20 +128,20 @@ async def test_single_step_tool_call():
 async def test_multi_step_autonomous():
     """Agent 先 WriteFile 再 ReadFile 然后停止 —— 端到端的多步流程。"""
     # 清理残留文件，避免 read-before-edit 拦截新文件创建
-    test_file = "/tmp/mewcode_test_hello.txt"
+    test_file = "/tmp/koko_test_hello.txt"
     if os.path.exists(test_file):
         os.remove(test_file)
     client = MockLLMClient([
         # 第 1 轮：WriteFile
         [
             TextDelta("Creating file."),
-            ToolCallComplete("t1", "WriteFile", {"file_path": "/tmp/mewcode_test_hello.txt", "content": "Hello World"}),
+            ToolCallComplete("t1", "WriteFile", {"file_path": "/tmp/koko_test_hello.txt", "content": "Hello World"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=20),
         ],
         # 第 2 轮：ReadFile 进行验证
         [
             TextDelta("Verifying content."),
-            ToolCallComplete("t2", "ReadFile", {"file_path": "/tmp/mewcode_test_hello.txt"}),
+            ToolCallComplete("t2", "ReadFile", {"file_path": "/tmp/koko_test_hello.txt"}),
             StreamEnd("end_turn", input_tokens=40, output_tokens=25),
         ],
         # 第 3 轮：最终答案
@@ -206,7 +206,7 @@ async def test_stop_max_iterations():
     for i in range(5):
         responses.append([
             TextDelta(f"Step {i}"),
-            ToolCallComplete(f"t{i}", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete(f"t{i}", "ReadFile", {"file_path": "KOKO.md"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=10),
         ])
 
@@ -243,7 +243,7 @@ async def test_stop_cancel():
             await asyncio.sleep(0.01)
             yield TextDelta(f"Step {self._call_count}")
             await asyncio.sleep(0.01)
-            yield ToolCallComplete(f"t{self._call_count}", "ReadFile", {"file_path": "MEWCODE.md"})
+            yield ToolCallComplete(f"t{self._call_count}", "ReadFile", {"file_path": "KOKO.md"})
             await asyncio.sleep(0.01)
             yield StreamEnd("end_turn", input_tokens=10, output_tokens=10)
 
@@ -311,7 +311,7 @@ async def test_message_splicing():
         # 第 1 轮：一个响应里包含两次工具调用
         [
             TextDelta("Reading two files."),
-            ToolCallComplete("t1", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t1", "ReadFile", {"file_path": "KOKO.md"}),
             ToolCallComplete("t2", "ReadFile", {"file_path": "pyproject.toml"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=20),
         ],
@@ -348,7 +348,7 @@ async def test_concurrent_batch_execution():
     """多个 ReadFile 调用并发执行（属于同一批次）。"""
     client = MockLLMClient([
         [
-            ToolCallComplete("t1", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t1", "ReadFile", {"file_path": "KOKO.md"}),
             ToolCallComplete("t2", "ReadFile", {"file_path": "pyproject.toml"}),
             StreamEnd("end_turn", input_tokens=10, output_tokens=20),
         ],
@@ -377,12 +377,12 @@ async def test_token_usage_accumulates():
     client = MockLLMClient([
         [
             TextDelta("Step 1"),
-            ToolCallComplete("t1", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t1", "ReadFile", {"file_path": "KOKO.md"}),
             StreamEnd("end_turn", input_tokens=100, output_tokens=50),
         ],
         [
             TextDelta("Step 2"),
-            ToolCallComplete("t2", "ReadFile", {"file_path": "MEWCODE.md"}),
+            ToolCallComplete("t2", "ReadFile", {"file_path": "KOKO.md"}),
             StreamEnd("end_turn", input_tokens=200, output_tokens=80),
         ],
         [
@@ -478,7 +478,7 @@ async def test_plan_mode_denied_tool_returns_error():
 
 def test_system_prompt_normal():
     sp = build_system_prompt()
-    assert "MewCode" in sp
+    assert "Koko" in sp
     assert "Plan mode" not in sp
 
 def test_system_prompt_plan():

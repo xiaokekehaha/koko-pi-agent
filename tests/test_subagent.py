@@ -14,7 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from koko_pi_agent.agents.parser import AgentDef, AgentParseError, parse_agent_file, parse_frontmatter
-from koko_pi_agent.agents.loader import AgentLoader
+from koko_pi_agent.agents.builtins import BUILTIN_AGENT_FILES
+from koko_pi_agent.agents.loader import AgentLoader, BuiltinAgentError
 from koko_pi_agent.agents.tool_filter import (
     ALL_AGENT_DISALLOWED_TOOLS,
     ASYNC_AGENT_ALLOWED_TOOLS,
@@ -241,6 +242,51 @@ class TestAgentLoader:
         assert "Explore" in names
         assert "Plan" in names
         assert "general-purpose" in names
+
+    def test_manifest_files_all_exist(self):
+        """清单里声明的文件必须真实存在——守住 BUILTIN_AGENT_FILES 本身。"""
+        import importlib.resources
+
+        pkg = importlib.resources.files("koko_pi_agent.agents.builtins")
+        missing = [f for f in BUILTIN_AGENT_FILES if not (pkg / f).is_file()]
+        assert missing == [], f"清单声明但不存在的内置 agent: {missing}"
+
+    def test_builtins_dir_has_no_unlisted_md(self):
+        """目录里不应有清单外的 .md，否则它会被静默忽略。"""
+        import importlib.resources
+
+        pkg = importlib.resources.files("koko_pi_agent.agents.builtins")
+        on_disk = {i.name for i in pkg.iterdir() if i.name.endswith(".md")}
+        assert on_disk == set(BUILTIN_AGENT_FILES)
+
+    def test_missing_builtin_raises(self, tmp_path: Path, monkeypatch):
+        """误删内置 agent 必须炸出来，而不是静默降级成空列表。"""
+        monkeypatch.setattr(
+            "koko_pi_agent.agents.loader.BUILTIN_AGENT_FILES",
+            BUILTIN_AGENT_FILES + ("does-not-exist.md",),
+        )
+        loader = AgentLoader(str(tmp_path))
+        with pytest.raises(BuiltinAgentError, match="does-not-exist.md"):
+            loader.load_all()
+
+    def test_missing_builtins_package_raises(self, tmp_path: Path, monkeypatch):
+        def boom(_name):
+            raise ModuleNotFoundError("no such package")
+
+        monkeypatch.setattr("importlib.resources.files", boom)
+        loader = AgentLoader(str(tmp_path))
+        with pytest.raises(BuiltinAgentError, match="安装不完整"):
+            loader.load_all()
+
+    def test_builtin_agents_are_consumable(self, tmp_path: Path):
+        """代码里硬引用的 agent 类型必须真的存在。"""
+        from koko_pi_agent.tools.agent_tool import GENERAL_PURPOSE_AGENT_TYPE
+
+        loader = AgentLoader(str(tmp_path), enable_verification=True)
+        agents = loader.load_all()
+        assert GENERAL_PURPOSE_AGENT_TYPE in agents
+        # teams/coordinator.py 的 prompt 里硬写了这个 subagent_type
+        assert "Verification" in agents
 
     def test_hot_reload(self, tmp_path: Path):
         agents_dir = tmp_path / ".koko" / "agents"

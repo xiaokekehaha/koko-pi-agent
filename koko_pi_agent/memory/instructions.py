@@ -158,10 +158,10 @@ def load_instructions(project_root: str) -> str:
     """发现并拼接项目和用户指令文件。
 
     发现顺序（低优先级在前，高优先级在后）：
-    1. 用户全局：~/.koko/MEWCODE.md, ~/.koko/AGENTS.md
-    2. 项目目录链：从 git root 到 workDir，每个目录的 MEWCODE.md 和 AGENTS.md
+    1. 用户全局：~/.koko/KOKO.md, ~/.koko/AGENTS.md
+    2. 项目目录链：从 git root 到 workDir，每个目录的 KOKO.md 和 AGENTS.md
     3. workDir/.koko/INSTRUCTIONS.md（遗留格式）
-    4. workDir/MEWCODE.local.md（本地覆盖）
+    4. workDir/KOKO.local.md（本地覆盖）
     """
     root = Path(project_root).resolve()
     home = Path.home()
@@ -196,19 +196,19 @@ def load_instructions(project_root: str) -> str:
         sources.append((label, content.rstrip("\n")))
 
     # 1. 用户全局
-    _add(home / ".koko" / "MEWCODE.md")
+    _add(home / ".koko" / "KOKO.md")
     _add(home / ".koko" / "AGENTS.md")
 
     # 2. 项目目录链
     for d in _project_instruction_dirs(root):
-        _add(d / "MEWCODE.md")
+        _add(d / "KOKO.md")
         _add(d / "AGENTS.md")
 
     # 3. 遗留格式
     _add(root / ".koko" / "INSTRUCTIONS.md")
 
     # 4. 本地覆盖
-    _add(root / "MEWCODE.local.md")
+    _add(root / "KOKO.local.md")
 
     if not sources:
         return ""

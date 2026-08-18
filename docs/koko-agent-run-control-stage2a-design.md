@@ -1,4 +1,4 @@
-# MewCode 阶段 2A 设计：AgentRun 控制面与运行中输入
+# Koko 阶段 2A 设计：AgentRun 控制面与运行中输入
 
 > - 状态：Implemented and verified
 > - 日期：2026-08-16
@@ -44,7 +44,7 @@ Pi 当前官方源码进一步确认：
 - [agent.ts](https://github.com/earendil-works/pi/blob/main/packages/agent/src/agent.ts)为 steering 和 follow-up 保存两个独立 `PendingMessageQueue`；
 - [usage.md](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/usage.md#message-queue)把 Enter、Alt+Enter 和 Escape 分别映射到 steering、follow-up 和 abort/recover。
 
-MewCode 已有唯一 `AgentLoop` 和深 `ToolPipeline`。因此正确借鉴是给现有 Loop 增加一个小控制面，而不是复制 Pi 的类、回调配置或消息体系。
+Koko 已有唯一 `AgentLoop` 和深 `ToolPipeline`。因此正确借鉴是给现有 Loop 增加一个小控制面，而不是复制 Pi 的类、回调配置或消息体系。
 
 ### 2.3 候选模块重新比较
 
@@ -78,7 +78,7 @@ MewCode 已有唯一 `AgentLoop` 和深 `ToolPipeline`。因此正确借鉴是�
 - 不增加任意 `shouldStopAfterTurn`、`prepareNextTurn` 或通用 callback 配置；
 - 不在本阶段动态切换模型、thinking level、system prompt 或 Tool 集合；
 - 不实现跨进程持久化队列；进程崩溃后的 queued input 恢复另行设计；
-- 不把 Pi 的 `AgentMessage`/provider Message 类型原样搬入 MewCode；
+- 不把 Pi 的 `AgentMessage`/provider Message 类型原样搬入 Koko；
 - 不改变 partial assistant 的 Conversation 持久化策略；
 - 不开放扩展拦截或修改 RunControl；
 - 不顺带实现 ResourceScope、EventPipeline、Command ownership 或热重载；
@@ -288,7 +288,7 @@ active run 期间：
 - AgentLoop 在决定 delivery 后按 FIFO 调用 `conversation.add_user_message()`；
 - 一旦写入 Conversation，该输入从 undelivered 集合永久移除。
 
-这比一开始深拷贝整个 Conversation 更适合 MewCode：auto compact、usage anchor、environment/memory 注入都依赖当前 Conversation 的真实身份。当前阶段先固定 single-writer，不制造两份会分叉的历史。
+这比一开始深拷贝整个 Conversation 更适合 Koko：auto compact、usage anchor、environment/memory 注入都依赖当前 Conversation 的真实身份。当前阶段先固定 single-writer，不制造两份会分叉的历史。
 
 ### 8.3 Turn 生命周期统一
 
@@ -396,7 +396,7 @@ cancel / failure
 - max turns 的判断移到当前 Turn boundary，使 queued input 不会先写进 Conversation、下一轮又因上限无法执行；
 - 保留现有 `RunResult.status="max_turns"` 与错误文本。
 
-`ToolResult.terminate` 当前 MewCode 语义是任一 ToolResult 要求终止就停止。本阶段保持该业务契约，不机械改成 Pi 的“全部 terminate”。
+`ToolResult.terminate` 当前 Koko 语义是任一 ToolResult 要求终止就停止。本阶段保持该业务契约，不机械改成 Pi 的“全部 terminate”。
 
 ### 10.3 最后一次 enqueue 与自然结束竞争
 
@@ -594,8 +594,8 @@ RunControl enqueue 不调用 EventSink，避免用户输入处理被当前事件
 ```bash
 .venv/bin/pytest tests/test_run_control.py tests/test_agent_runtime.py tests/test_runtime_composition.py tests/test_tui_runtime_adapter.py tests/test_remote_runtime_adapter.py tests/test_tool_pipeline.py tests/test_agent.py -q
 .venv/bin/pytest -q
-uvx ruff check --select E9,F63,F7,F82 mewcode tests
-.venv/bin/python -m compileall -q mewcode tests
+uvx ruff check --select E9,F63,F7,F82 koko_pi_agent tests
+.venv/bin/python -m compileall -q koko_pi_agent tests
 git diff --check
 ```
 
@@ -641,7 +641,7 @@ git diff --check
 - [x] AgentLoop 是 Conversation 的 queued-input single writer。
 - [x] cancel/terminate/max turns 不消费 queued input。
 - [x] 第一版固定 drain-all，不增加配置 schema。
-- [x] 保留 MewCode `terminate=any` 现有语义。
+- [x] 保留 Koko `terminate=any` 现有语义。
 - [x] TurnPreparer、ResourceScope、EventPipeline、Command 均不混入 2A。
 - [x] 开发不用 TDD，但每批实现后必须补行为测试并跑回归。
 - [x] 用户明确授权后才开始修改生产代码。

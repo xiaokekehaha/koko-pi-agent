@@ -47,9 +47,12 @@ def get_auto_mem_path(project_root: str) -> str:
     """返回项目级记忆目录路径：<projectRoot>/.koko/memory/。
 
     保留尾部分隔符，确保前缀匹配不会误命中类似 memoryxyz 的路径。
-    支持 MEWCODE_REMOTE_MEMORY_DIR 环境变量覆盖。
+    支持 KOKO_REMOTE_MEMORY_DIR 环境变量覆盖；改名前的
+    MEWCODE_REMOTE_MEMORY_DIR 仍然生效，以免升级后已有部署失效。
     """
-    override = os.environ.get("MEWCODE_REMOTE_MEMORY_DIR", "")
+    override = os.environ.get("KOKO_REMOTE_MEMORY_DIR", "") or os.environ.get(
+        "MEWCODE_REMOTE_MEMORY_DIR", ""
+    )
     if override:
         return override.rstrip(os.sep) + os.sep
     abs_root = os.path.abspath(project_root)

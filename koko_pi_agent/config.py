@@ -94,11 +94,56 @@ def resolve_env_vars(value: str) -> str:
     return _ENV_VAR_RE.sub(lambda m: os.environ.get(m.group(1), m.group(0)), value)
 
 
+# MCP 子进程继承的环境变量白名单。
+#
+# 这里刻意用白名单而不是整体继承：MCP server 是第三方代码，宿主环境里有
+# ANTHROPIC_API_KEY 之类的凭据，不该交给它。反过来，只传 PATH 也不够——
+# 缺 HOME 时 npm 读不到 ~/.npmrc 和缓存，缺代理变量时需要走代理才能出网的
+# 环境里子进程会静默失败，而这些失败都只体现为一句 "Connection closed"。
+_INHERITED_ENV_VARS: tuple[str, ...] = (
+    "PATH",
+    # 决定 npm/uv/pip 的配置与缓存位置；缺失时 Node 会退到 getpwuid，行为随平台漂移
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "LANG",
+    "LC_ALL",
+    "TMPDIR",
+    # 代理：注意代理 URL 可能自带凭据，这是用户自己的网络配置，子进程需要它出网
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    # TLS 根证书：企业内网的 MITM 代理依赖这些
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "REQUESTS_CA_BUNDLE",
+    # Windows 上缺这些子进程根本起不来
+    "SystemRoot",
+    "SystemDrive",
+    "COMSPEC",
+    "PATHEXT",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "USERPROFILE",
+    "TEMP",
+    "TMP",
+)
+
+
 def build_child_env(declared_env: dict[str, str] | None) -> dict[str, str]:
     env: dict[str, str] = {}
-    path = os.environ.get("PATH", "")
-    if path:
-        env["PATH"] = path
+    for key in _INHERITED_ENV_VARS:
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    # 配置里显式声明的变量优先级最高
     for key, value in (declared_env or {}).items():
         env[key] = resolve_env_vars(value)
     return env

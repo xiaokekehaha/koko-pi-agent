@@ -5,11 +5,11 @@ from pathlib import Path
 import pytest
 
 import koko_pi_agent.app as app_module
-from koko_pi_agent.app import ChatInput, ChatTranscript, MewCodeApp, ToolCallBlock
+from koko_pi_agent.app import ChatInput, ChatTranscript, KokoApp, ToolCallBlock
 from koko_pi_agent.config import ProviderConfig
 
 
-class InputFocusTestApp(MewCodeApp):
+class InputFocusTestApp(KokoApp):
     CSS_PATH = str(Path(app_module.__file__).with_name("styles.tcss"))
 
     def __init__(self, ui_state_path: Path) -> None:

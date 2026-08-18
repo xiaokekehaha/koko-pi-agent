@@ -1,20 +1,21 @@
-# MewCode Runtime 迭代设计：参考 Pi，而不是实现 Mini Pi
+# Koko Runtime 迭代设计：参考 Pi，而不是实现 Mini Pi
 
-> - 状态：Design v0.9，阶段 0/1/2A/2B 已实施并通过全量验证
+> - 状态：Design v0.9，阶段 0/1/2A/2B/2C 已实施并通过全量验证
 > - 日期：2026-08-16
-> - 目标主体：当前 MewCode 0.2.0 项目，Python 3.11+
-> - 当前阶段：阶段 2B TurnPreparer 已完成；下一阶段候选为 2C 资源与受控任务所有权
-> - 核心取向：在现有 MewCode 上迭代 Runtime，参考 Pi 的分层与扩展机制，并用 Python 的资源管理机制保证可靠清理
-> - 明确边界：不是另起炉灶实现一个 Mini Pi，也不是把 MewCode 改名或复刻成 Pi
+> - 目标主体：当前 Koko 0.2.0 项目，Python 3.11+
+> - 当前阶段：阶段 0/1/2A/2B/2C 均已实施并验证；下一阶段候选为 2D 事件管线或 2E Command 所有权
+> - 核心取向：在现有 Koko 上迭代 Runtime，参考 Pi 的分层与扩展机制，并用 Python 的资源管理机制保证可靠清理
+> - 明确边界：不是另起炉灶实现一个 Mini Pi，也不是把 Koko 改名或复刻成 Pi
 
 关联阅读：
 
 - [Mini Plugin Agent：面向 Python 新手的插件化编程学习设计](./plugin-agent-learning-design.md)
 - [从 Cordis 的时空可组合性到 Python 插件运行时](./cordis-python-async-learning-guide.md)
-- [阶段 0：统一 Agent Loop 与 Tool Execution Pipeline](./mewcode-agent-loop-stage0-design.md)
-- [阶段 1：ExtensionHost 内置 Tool 纵向切片](./mewcode-extension-host-stage1-design.md)
-- [阶段 2A：AgentRun 控制面与运行中输入](./mewcode-agent-run-control-stage2a-design.md)
-- [ResourceScope 与 TaskSupervisor 候选设计（已顺延）](./mewcode-extension-resources-stage2a-design.md)
+- [阶段 0：统一 Agent Loop 与 Tool Execution Pipeline](./koko-agent-loop-stage0-design.md)
+- [阶段 1：ExtensionHost 内置 Tool 纵向切片](./koko-extension-host-stage1-design.md)
+- [阶段 2A：AgentRun 控制面与运行中输入](./koko-agent-run-control-stage2a-design.md)
+- [阶段 2C：ResourceScope 与 TaskSupervisor](./koko-extension-resources-stage2c-design.md)
+- [ResourceScope 原候选设计（已被 2C 复核版取代）](./koko-extension-resources-stage2a-design.md)
 - [Pi 官方仓库](https://github.com/earendil-works/pi)
 - [Pi Chapter 1：Core、Agent 与 Harness](https://books.antinomie.org/pi/chapter/01)
 - [Pi Chapter 2：一次 Prompt 的完整路径](https://books.antinomie.org/pi/chapter/02)
@@ -23,15 +24,15 @@
 - [Pi Agent Loop 讲解](https://dg-ai-notes.pages.dev/modules/ch03-agent-loop/)
 - [Pi 官方 Agent Loop 源码](https://github.com/earendil-works/pi/blob/main/packages/agent/src/agent-loop.ts)
 
-## 1. 先说结论：主体是 MewCode
+## 1. 先说结论：主体是 Koko
 
-这份设计的主体始终是当前 MewCode。Pi 是架构参考和对照样本，不是要交付的新产品。
+这份设计的主体始终是当前 Koko。Pi 是架构参考和对照样本，不是要交付的新产品。
 
-MewCode 不需要重写成 Cordis，也不需要重新实现一个 Pi 或 Agent Loop。
+Koko 不需要重写成 Cordis，也不需要重新实现一个 Pi 或 Agent Loop。
 
 更合适的方向是：
 
-> 保留当前 MewCode 的 Agent、Tool、Command、Hook、Skill、Team 和 Remote 行为；先把分叉的运行路径收敛成唯一 `AgentLoop`、`ToolPipeline` 和 `AgentRun`，再由 `AgentRuntime` 与 `ExtensionHost` 统一装配和管理扩展生命周期。
+> 保留当前 Koko 的 Agent、Tool、Command、Hook、Skill、Team 和 Remote 行为；先把分叉的运行路径收敛成唯一 `AgentLoop`、`ToolPipeline` 和 `AgentRun`，再由 `AgentRuntime` 与 `ExtensionHost` 统一装配和管理扩展生命周期。
 
 用通俗的话说：
 
@@ -57,7 +58,7 @@ MewCode 不需要重写成 Cordis，也不需要重新实现一个 Pi 或 Agent 
 
 Pi 的设计有时会被概括为“small core”。这里的 small 指核心承担的职责少、变化原因少，不是功能少、代码玩具化或另做一个缩小版 Pi。
 
-放到 MewCode 中，更准确的翻译是“稳定核心 + 可扩展 Runtime”：
+放到 Koko 中，更准确的翻译是“稳定核心 + 可扩展 Runtime”：
 
 | 保留的行为 | 收拢为稳定深模块 | 明确不会删除 |
 | --- | --- | --- |
@@ -66,11 +67,11 @@ Pi 的设计有时会被概括为“small core”。这里的 small 指核心承
 | 工具调用、重试、压缩等已验证行为 | Tool、Command、Hook、Skill 的装配 | 当前 Provider、Permission 与 MCP 接入 |
 | 当前用户配置和会话格式 | 扩展发现、所有权和 Session 级清理 | Skill、Memory 与 Worktree 能力 |
 
-所以，“核心职责收窄”描述的是代码职责边界，不是产品功能降级。MewCode 的功能继续保留，只让变化频繁的装配与扩展逻辑不再散落进 Agent 和多个入口。
+所以，“核心职责收窄”描述的是代码职责边界，不是产品功能降级。Koko 的功能继续保留，只让变化频繁的装配与扩展逻辑不再散落进 Agent 和多个入口。
 
 ## 2. 为什么现在适合这样设计
 
-### 2.1 MewCode 已经具备的基础
+### 2.1 Koko 已经具备的基础
 
 当前仓库已经有不少 Pi 风格的基础能力：
 
@@ -101,14 +102,14 @@ Pi 的设计有时会被概括为“small core”。这里的 small 指核心承
 
 ### 2.3 现有学习 Demo 不属于产品主线
 
-工作区中的 `examples/mini_pi_agent/` 演示了最小的“模型 → 工具 → 模型”循环。它只能作为学习材料，不能成为当前 MewCode 迭代的产品架构、命名来源或实现基线。
+工作区中的 `examples/mini_pi_agent/` 演示了最小的“模型 → 工具 → 模型”循环。它只能作为学习材料，不能成为当前 Koko 迭代的产品架构、命名来源或实现基线。
 
 二者关系如下：
 
-| 独立学习 Demo | 当前 MewCode 迭代 |
+| 独立学习 Demo | 当前 Koko 迭代 |
 | --- | --- |
-| 证明最小循环怎样工作 | 改善真实 MewCode 的扩展、装配和资源回收 |
-| 使用 Fake LLM，强调确定性 | 复用 MewCode 已有模型与流式执行 |
+| 证明最小循环怎样工作 | 改善真实 Koko 的扩展、装配和资源回收 |
+| 使用 Fake LLM，强调确定性 | 复用 Koko 已有模型与流式执行 |
 | 一个 ToolRegistry | 每个 Agent Runtime 拥有隔离的注册表和扩展会话 |
 | 不处理外部插件 | 逐阶段加入内置扩展、安装包扩展和可信本地扩展 |
 | 不处理热重载 | 先设计安全的关闭与替换，再考虑热重载 |
@@ -166,12 +167,12 @@ Pi 的设计有时会被概括为“small core”。这里的 small 指核心承
 ### 3.3 当前明确不做
 
 - 不把所有 Python 对象都包装成插件。
-- 不重写 MewCode 的 Agent 行为；阶段 0 通过测试保护现有行为，再抽取唯一 Loop Implementation。
+- 不重写 Koko 的 Agent 行为；阶段 0 通过测试保护现有行为，再抽取唯一 Loop Implementation。
 - 不新建另一个 Mini Pi 产品或平行运行框架。
 - 不在第一阶段实现 Cordis 的通用 Service、Inject 和依赖图协调器。
 - 不在第一阶段支持热重载。
 - 不把 Python 模块导入误称为安全沙箱。
-- 不承诺隔离恶意扩展；扩展代码与 MewCode 进程拥有相同系统权限。
+- 不承诺隔离恶意扩展；扩展代码与 Koko 进程拥有相同系统权限。
 - 不引入数据库会话、分布式任务队列或跨进程事件总线。
 - 不把 TUI、Remote UI 和协议客户端同时重构。
 - 不在本轮创建或修改生产实现与测试代码。
@@ -220,7 +221,7 @@ flowchart TB
 
 TUI、Remote、Headless、Skill 和 Sub-agent 是这些 Interface 的 Adapter，不再拥有自己的 Loop Implementation。
 
-详细不变量、时序、Interface 草案和 0A–0F 迁移计划见[阶段 0 设计](./mewcode-agent-loop-stage0-design.md)。
+详细不变量、时序、Interface 草案和 0A–0F 迁移计划见[阶段 0 设计](./koko-agent-loop-stage0-design.md)。
 
 ### 5.0A `RunControl`：AgentRun 的运行中输入控制面
 
@@ -232,7 +233,7 @@ TUI、Remote、Headless、Skill 和 Sub-agent 是这些 Interface 的 Adapter，
 - AgentLoop 是 active run 期间把 queued input 写入 Conversation 的唯一 owner；
 - TUI、Remote 与直接 AgentRun 调用共享同一个 Interface。
 
-完整 Interface、状态机、竞态处理、Adapter 协议和非 TDD 实施步骤见[阶段 2A 详细设计](./mewcode-agent-run-control-stage2a-design.md)。
+完整 Interface、状态机、竞态处理、Adapter 协议和非 TDD 实施步骤见[阶段 2A 详细设计](./koko-agent-run-control-stage2a-design.md)。
 
 ### 5.1 `AgentRuntime`：应用看到的统一入口
 
@@ -368,13 +369,13 @@ ResourceLoader 只把不同来源转换为统一的扩展说明和静态资源�
 
 规划中的发现顺序：
 
-1. MewCode 内置扩展；
+1. Koko 内置扩展；
 2. Python 安装包入口点；
 3. 用户显式配置的本地路径；
 4. 已信任项目的 `.koko/extensions/`；
 5. 命令行临时指定的扩展路径。
 
-外部 Python 包优先采用标准库 `importlib.metadata.entry_points()`，入口点组名规划为 `mewcode.extensions`。这样扩展可以正常打包、安装、查询版本和卸载，不需要 MewCode 手写一套包管理器。
+外部 Python 包优先采用标准库 `importlib.metadata.entry_points()`，入口点组名规划为 `koko_pi_agent.extensions`。这样扩展可以正常打包、安装、查询版本和卸载，不需要 Koko 手写一套包管理器。
 
 ## 6. 生命周期语义
 
@@ -547,13 +548,13 @@ Registry 中每条记录从“名称 → 对象”升级为“名称 → Contrib
 | `extensions.replacements` | 能力名到扩展 ID 的映射 | 空 | 用户明确授权能力替换 |
 | `extensions.project_trust` | `ask`、`deny` 或 `allow` | `ask` | 项目本地 Python 扩展的信任策略 |
 
-配置加载仍遵守 MewCode 现有的全局与项目合并方式，但项目配置不能自行把项目标记成可信。
+配置加载仍遵守 Koko 现有的全局与项目合并方式，但项目配置不能自行把项目标记成可信。
 
 ### 9.2 信任模型
 
 必须在文档和 UI 中明确：
 
-> Python 扩展是任意代码，不是配置文件。导入它就等于允许它以 MewCode 进程权限读取文件、访问网络和启动子进程。
+> Python 扩展是任意代码，不是配置文件。导入它就等于允许它以 Koko 进程权限读取文件、访问网络和启动子进程。
 
 因此：
 
@@ -571,7 +572,7 @@ Registry 中每条记录从“名称 → 对象”升级为“名称 → Contrib
 
 原因不是重复造轮子，而是当前主要问题不同：
 
-| MewCode 需要解决的问题 | pluggy 是否直接负责 |
+| Koko 需要解决的问题 | pluggy 是否直接负责 |
 | --- | --- |
 | Tool 和 Command 的具名冲突与来源 | 否 |
 | 每个 Agent 独立的扩展会话 | 否 |
@@ -594,7 +595,7 @@ Registry 中每条记录从“名称 → 对象”升级为“名称 → Contrib
 
 ### 11.1 Pi 是参考架构，不是目标产品
 
-MewCode 选择性吸收 Pi 的这些取向：
+Koko 选择性吸收 Pi 的这些取向：
 
 - Agent 核心保持小，产品能力通过扩展注册；
 - Tool、Command、事件和资源由统一扩展入口贡献；
@@ -603,7 +604,7 @@ MewCode 选择性吸收 Pi 的这些取向：
 - 项目本地扩展需要信任；
 - 扩展运行在宿主进程中，因此拥有完整系统权限。
 
-结合 MewCode 的 Python 代码和既有多 Agent 能力，本次迭代额外强调：
+结合 Koko 的 Python 代码和既有多 Agent 能力，本次迭代额外强调：
 
 - 用 `AsyncExitStack` 托管资源，而不是只约定扩展作者手写 shutdown；
 - 用标准 Python entry points 发现安装包扩展；
@@ -622,7 +623,7 @@ MewCode 选择性吸收 Pi 的这些取向：
 | Loader | ResourceLoader | 接近，但第一版只做发现和校验 |
 | Isolate | 每个 AgentRuntime 的独立 ExtensionSession | 只做状态与解析隔离，不是安全沙箱 |
 
-这里刻意不加入通用 Service/Inject 容器。当前 MewCode 的真实扩展点主要是 Tool、Command、Hook 和 Skill；先把这些做深，比提前设计一个可以装任何对象的容器更可靠。
+这里刻意不加入通用 Service/Inject 容器。当前 Koko 的真实扩展点主要是 Tool、Command、Hook 和 Skill；先把这些做深，比提前设计一个可以装任何对象的容器更可靠。
 
 ## 12. 设计 Demo：Safe Ops 扩展的一生
 
@@ -740,7 +741,7 @@ sequenceDiagram
 
 阶段 0 验收：生产代码只有一个 Loop 和 Tool Pipeline；截断 Tool Call 执行次数为零；interactive/headless Conversation 一致；非并发安全 Tool 不重叠；取消后无 Run-owned task；第二个并发 Run 在 Agent 层失败。
 
-完整设计、兼容策略和回滚点见[阶段 0 详细设计](./mewcode-agent-loop-stage0-design.md)。
+完整设计、兼容策略和回滚点见[阶段 0 详细设计](./koko-agent-loop-stage0-design.md)。
 
 ### 阶段 1：内置 Tool 走通 ExtensionHost
 
@@ -773,7 +774,7 @@ sequenceDiagram
 
 阶段 1 回滚：删除新组合根接线并恢复原有手工装配；没有配置格式和持久化数据迁移，回滚不需要转换用户数据。
 
-完整 Interface、状态机、Tool profile、文件影响、1A–1F 步骤和测试矩阵见[阶段 1 详细设计](./mewcode-extension-host-stage1-design.md)。
+完整 Interface、状态机、Tool profile、文件影响、1A–1F 步骤和测试矩阵见[阶段 1 详细设计](./koko-extension-host-stage1-design.md)。
 
 ### 阶段 2A：AgentRun 控制面与运行中输入
 
@@ -793,7 +794,7 @@ sequenceDiagram
 
 阶段 2A 验收已通过：同一 gated scripted Agent 在 TUI/Remote 中得到一致的 Conversation 投影；运行中输入不丢失、不隐式取消，硬停止不误消费；TUI Session exactly-once、单 active run 与 ToolPipeline 行为均未回归。目标矩阵 `76 passed`；当前树全量 `693 passed, 1 skipped, 1` 个既有 warning；临时 detached worktree 隔离重放 Stage 1+2A 后为 `687 passed, 1 skipped, 1 warning`。
 
-完整范围、Interface、状态机、2A0–2A5 非 TDD 实施步骤和验证矩阵见[阶段 2A 详细设计](./mewcode-agent-run-control-stage2a-design.md)。
+完整范围、Interface、状态机、2A0–2A5 非 TDD 实施步骤和验证矩阵见[阶段 2A 详细设计](./koko-agent-run-control-stage2a-design.md)。
 
 ### 阶段 2B：Turn preparation seam
 
@@ -811,7 +812,11 @@ sequenceDiagram
 
 ### 阶段 2C：资源与受控后台任务纳入所有权
 
-目标保持不变：让 ExtensionAPI 完整管理长生命周期资源和 extension-owned task。原[候选详细设计](./mewcode-extension-resources-stage2a-design.md)继续保留，实施前按 2C 编号复核，不与 RunControl 混做。
+目标保持不变：让 ExtensionAPI 完整管理长生命周期资源和 extension-owned task。
+
+已实施并验证，见[阶段 2C 详细设计](./koko-extension-resources-stage2c-design.md)。原候选设计的三方法 Interface、四个内部 Module、9 条生命周期语义中的 8 条与 7 条不变量中的 6 条均沿用；实质修订四处：批次由 6 批改为 7 批（拆出 `extension_id` 命名统一）、diagnostics 工作因 2A/2B 已落地 `_close_lock` 与 `_record_leaked_contributions` 而收窄、`RuntimeProfile` 改名移到真实 Definition 批次、`agent_loop.py` 两个 fire-and-forget task 明确列为非目标并加反向结构门。
+
+实施结果：新增 `koko_pi_agent/extensions/resources.py`（`ResourceScope` + 内部 `TaskSupervisor`）；`ExtensionAPI` 增加 `acquire`/`defer`/`start_task`；catalog 加入第二个生产 Definition `koko_pi_agent.runtime-resources`，用它托管 MCPManager 关闭与 TUI worktree stale-cleanup 任务；TUI/Remote/teammate 三个入口不再自己持有这两类资源。全量 `716 passed`（较基线 +24 个新测试），零新增失败；`compileall` 与 `git diff --check` 通过；当前环境无 Ruff，未声称通过。
 
 ### 阶段 2D：扩展事件管线
 
@@ -827,7 +832,7 @@ sequenceDiagram
 
 计划内容：
 
-- ResourceLoader 读取 `mewcode.extensions` entry points；
+- ResourceLoader 读取 `koko_pi_agent.extensions` entry points；
 - 校验扩展 ID、工厂形态、版本和重复来源；
 - 增加 enabled、disabled 和 failure policy 配置；
 - 输出加载诊断和当前贡献来源；
@@ -966,7 +971,7 @@ sequenceDiagram
 
 ### 18.1 当前较稳的假设
 
-- MewCode 继续以 Python 3.11+ 和 `asyncio` 为主要运行环境；
+- Koko 继续以 Python 3.11+ 和 `asyncio` 为主要运行环境；
 - 现有 Agent 行为是要复用的核心；双轨 Loop Implementation 要在行为测试保护下收敛为一个深模块；
 - 主 Agent 与队友 Agent 需要独立状态；
 - Tool、Command、Hook 和 Skill 是近期最真实的扩展点。
@@ -991,7 +996,7 @@ sequenceDiagram
 
 进入实现前，需要确认下面这些选择：
 
-- [x] 保留现有 MewCode Agent 行为，在测试保护下收敛为唯一 AgentLoop，不创建 Mini Pi 或平行 Runtime 产品。
+- [x] 保留现有 Koko Agent 行为，在测试保护下收敛为唯一 AgentLoop，不创建 Mini Pi 或平行 Runtime 产品。
 - [x] 在 ExtensionHost 前先完成阶段 0，让所有运行路径共享唯一 AgentLoop 与 ToolPipeline。
 - [x] 默认取消 streaming 期间的 Tool 抢跑，完整 Assistant Message 确认后才执行 Tool。
 - [x] 用 `ToolResult.terminate` 替代 Loop 对 `ExitPlanMode` 名称的硬编码。
@@ -1011,4 +1016,4 @@ sequenceDiagram
 
 ## 20. 下一步
 
-阶段 0、阶段 1、[阶段 2A AgentRun 控制面](./mewcode-agent-run-control-stage2a-design.md)和阶段 2B TurnPreparer 均已完成。2B 已把每轮模型调用前的 Context 准备收进单一 `prepare()` Interface，AgentLoop 只消费 `PreparedModelCall`，RunControl、ToolPipeline、Session 和 Provider 行为保持不变。下一步候选是按 2C 编号复核并实施[ResourceScope 与 TaskSupervisor 候选设计](./mewcode-extension-resources-stage2a-design.md)；事件、Command、外部扩展和重载仍需各自审批。
+阶段 0、阶段 1、[阶段 2A AgentRun 控制面](./koko-agent-run-control-stage2a-design.md)和阶段 2B TurnPreparer 均已完成。2B 已把每轮模型调用前的 Context 准备收进单一 `prepare()` Interface，AgentLoop 只消费 `PreparedModelCall`，RunControl、ToolPipeline、Session 和 Provider 行为保持不变。[阶段 2C ResourceScope 与 TaskSupervisor](./koko-extension-resources-stage2c-design.md)已完成 2C0–2C6 全部批次：扩展现在拥有真正的资源与受控后台任务所有权，关闭顺序、取消超时与清理失败聚合都由 Host 统一保证。下一步候选是 2D 事件管线（含 `hooks/engine.py` 目前无主的 `ensure_future`）或 2E Command 所有权，两者都需要单独审批；外部扩展发现和重载仍在其后。

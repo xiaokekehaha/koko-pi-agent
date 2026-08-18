@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 import pytest
@@ -15,6 +16,7 @@ from koko_pi_agent.extensions import (
     ExtensionDefinition,
     ExtensionHost,
     ExtensionStartupError,
+    RuntimeProfile,
     ToolProfile,
     create_builtin_extension_host,
     tool_names_for_profile,
@@ -354,7 +356,7 @@ async def test_builtin_manifest_creates_owned_tools_in_profile_order(
     assert {
         contribution.owner.extension_id
         for contribution in runtime.registry.list_contributions()
-    } == {"mewcode.builtin-tools"}
+    } == {"koko_pi_agent.builtin-tools"}
     assert {
         contribution.owner.runtime_id
         for contribution in runtime.registry.list_contributions()
@@ -546,3 +548,154 @@ async def test_prompt_entrypoint_closes_runtime_when_agent_run_raises(
 
     assert opened[0].state == "closed"
     assert opened[0].registry.list_contributions() == ()
+
+
+@pytest.mark.asyncio
+async def test_runtime_diagnostics_are_live_not_an_open_time_snapshot() -> None:
+    async def explode() -> None:
+        raise ValueError("background task exploded")
+
+    def install(api, _bindings) -> None:
+        api.register_tool(_OwnedTool())
+        api.start_task("exploding", explode())
+
+    host = ExtensionHost(
+        ExtensionCatalog(
+            [
+                ExtensionDefinition(
+                    extension_id="test.live-diagnostics",
+                    display_name="Live diagnostics",
+                    source="test",
+                    installer=install,
+                )
+            ]
+        )
+    )
+
+    runtime = await AgentRuntime.open(
+        AgentRuntimeRequest(
+            profile=ToolProfile.PROMPT_LEAD,
+            work_dir="/tmp/runtime-test",
+            agent_factory=_FakeAgent,
+            bindings_factory=lambda _agent, _registry: "typed-bindings",
+        ),
+        extension_host=host,
+    )
+
+    assert [item.status for item in runtime.diagnostics] == ["activated"]
+
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    # open 时的快照式实现看不到这条：它在 Session 激活之后才产生
+    live = [item for item in runtime.diagnostics if item.status == "task_failed"]
+    assert len(live) == 1
+    assert live[0].name == "exploding"
+    assert runtime.state == "active"
+
+    await runtime.aclose()
+    assert runtime.state == "closed"
+
+
+def _resource_bindings_factory(tmp_path, **extra):
+    """完整 manager 集合：两个 profile 的内置 Tool 都需要它们才能激活。"""
+
+    worktree_manager = WorktreeManager(repo_root=str(tmp_path))
+    trace_manager = TraceManager()
+    task_manager = TaskManager()
+    agent_loader = AgentLoader(str(tmp_path))
+    skill_loader = SkillLoader(str(tmp_path))
+    skill_loader.load_all()
+    team_manager = TeamManager(
+        worktree_manager=worktree_manager,
+        trace_manager=trace_manager,
+    )
+
+    def create_bindings(agent, registry):
+        return BuiltinRuntimeBindings(
+            agent=agent,
+            registry=registry,
+            protocol="anthropic",
+            agent_loader=agent_loader,
+            task_manager=task_manager,
+            trace_manager=trace_manager,
+            worktree_manager=worktree_manager,
+            team_manager=team_manager,
+            skill_loader=skill_loader,
+            **extra,
+        )
+
+    return create_bindings
+
+
+@pytest.mark.asyncio
+async def test_runtime_resources_definition_activates_as_noop_without_bindings(
+    tmp_path,
+) -> None:
+    runtime = await AgentRuntime.open(
+        AgentRuntimeRequest(
+            profile=RuntimeProfile.PROMPT_LEAD,
+            work_dir=str(tmp_path),
+            agent_factory=_FakeAgent,
+            bindings_factory=_resource_bindings_factory(tmp_path),
+        ),
+        extension_host=create_builtin_extension_host(),
+    )
+
+    activated = [
+        item.extension_id for item in runtime.diagnostics if item.status == "activated"
+    ]
+    assert activated == [
+        "koko_pi_agent.builtin-tools",
+        "koko_pi_agent.runtime-resources",
+    ]
+    # no-op：没有 mcp_manager / stale_cleanup_factory 就不该贡献任何东西
+    assert {
+        contribution.owner.extension_id
+        for contribution in runtime.registry.list_contributions()
+    } == {"koko_pi_agent.builtin-tools"}
+
+    await runtime.aclose()
+    assert runtime.state == "closed"
+    assert runtime.registry.list_contributions() == ()
+
+
+@pytest.mark.asyncio
+async def test_runtime_resources_owns_mcp_shutdown_and_stale_cleanup(tmp_path) -> None:
+    events: list[str] = []
+    started = asyncio.Event()
+
+    class _FakeMCPManager:
+        async def shutdown(self) -> None:
+            events.append("mcp-shutdown")
+
+    async def stale_cleanup() -> None:
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            events.append("stale-cancelled")
+            raise
+
+    runtime = await AgentRuntime.open(
+        AgentRuntimeRequest(
+            profile=RuntimeProfile.TEAMMATE_WORKER,
+            work_dir=str(tmp_path),
+            agent_factory=_FakeAgent,
+            bindings_factory=_resource_bindings_factory(
+                tmp_path,
+                mcp_manager=_FakeMCPManager(),
+                stale_cleanup_factory=stale_cleanup,
+            ),
+        ),
+        extension_host=create_builtin_extension_host(),
+    )
+
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    assert events == []
+
+    await runtime.aclose()
+
+    # 后台任务先被取消并等待，之后才关闭连接管理器
+    assert events == ["stale-cancelled", "mcp-shutdown"]
+    assert runtime.state == "closed"

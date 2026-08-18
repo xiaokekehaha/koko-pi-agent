@@ -2,7 +2,7 @@
 
 > - 源码基准：`github.com/earendil-works/pi` main 分支，2026-08-17 抓取
 > - 文章基准：[dg-ai-notes 第 3 章 Agent Loop](https://dg-ai-notes.pages.dev/modules/ch03-agent-loop/)（基于 v0.80.2）、[pi-book](https://zhanghandong.github.io/pi-book/)（基于 v0.66.0 对照 v0.82.1）
-> - 用途：给 MewCode Runtime 迭代提供逐层对照依据，见 [MewCode Runtime 迭代设计](./mewcode-pi-inspired-runtime-design.md)
+> - 用途：给 Koko Runtime 迭代提供逐层对照依据，见 [Koko Runtime 迭代设计](./koko-pi-inspired-runtime-design.md)
 > - 注意：文章讲的是 `badlogic/pi-mono`，仓库已迁移到 `earendil-works/pi`，本文所有行号以当前 main 为准
 
 ## 0. 这张图对应到什么代码
@@ -632,9 +632,9 @@ pi-ai：统一不同 LLM Provider 的消息与流式事件
 
 ---
 
-## 对 MewCode 的对照
+## 对 Koko 的对照
 
-| Pi | MewCode 当前 | 差距 |
+| Pi | Koko 当前 | 差距 |
 | --- | --- | --- |
 | `packages/ai` 统一 Message / AssistantMessageEvent / StopReason / Usage | `koko_pi_agent/runtime/model_stream.py`、`events.py` | Provider 抽象规模差一个量级，但不变量的形状一致 |
 | `agent-loop.ts` 无状态 + 全部通过回调注入 | `koko_pi_agent/runtime/agent_loop.py`（598 行） | 需核对：是否还有状态挂在 loop 上 |

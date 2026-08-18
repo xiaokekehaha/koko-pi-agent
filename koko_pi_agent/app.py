@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import random
 import time as _time
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -80,8 +82,9 @@ from koko_pi_agent.skills.executor import SkillExecutor
 from koko_pi_agent.skills.loader import SkillLoader
 from koko_pi_agent.commands.handlers.skill_register import register_skill_commands
 from koko_pi_agent.extensions import (
+    DEFAULT_CANCEL_TIMEOUT,
     BuiltinRuntimeBindings,
-    ToolProfile,
+    RuntimeProfile,
     create_builtin_extension_host,
 )
 from koko_pi_agent.runtime import (
@@ -112,8 +115,17 @@ if TYPE_CHECKING:
 
 import re
 
+log = logging.getLogger(__name__)
+
 MAX_TRUNCATED_LINES = 20
 MAX_AT_REF_BYTES = 10240
+
+APP_NAME = "Koko"
+
+try:
+    APP_VERSION = _pkg_version("koko-pi-agent")
+except PackageNotFoundError:  # 未安装为包（例如直接从源码目录运行）
+    APP_VERSION = "0.0.0"
 
 _AT_REF_RE = re.compile(r"@([\w./_\-]+(?:\.[\w]+)*)")
 
@@ -723,8 +735,8 @@ class SubAgentBlock(Static, can_focus=True):
         self._render_done()
 
 
-_MEWCODE_THEME = Theme(
-    name="mewcode",
+_KOKO_THEME = Theme(
+    name="koko",
     primary="#875FFF",
     background="#1a1a1a",
     surface="#1a1a1a",
@@ -733,12 +745,12 @@ _MEWCODE_THEME = Theme(
 )
 
 
-class MewCodeApp(App):
+class KokoApp(App):
     CSS_PATH = "styles.tcss"
-    TITLE = "MewCode"
+    TITLE = APP_NAME
     INLINE_PADDING = 0
     AUTO_FOCUS = "#chat-input"
-    theme = "mewcode"
+    theme = "koko"
     BINDINGS = [
         Binding("ctrl+c", "handle_ctrl_c", "Quit", priority=True),
         Binding("escape", "cancel", "Cancel", priority=True),
@@ -790,7 +802,6 @@ class MewCodeApp(App):
         self._spinner_idx: int = 0
         self._spinner_timer = None
         self._spinner_label: Static | None = None
-        self._mcp_server_info: str = ""
         self._agent_task: asyncio.Task[None] | None = None
         self._subagent_task: asyncio.Task[None] | None = None
         self._subagent_start_time: float | None = None
@@ -809,7 +820,6 @@ class MewCodeApp(App):
         self.trace_manager: TraceManager = TraceManager()
         self._notification_check_task: asyncio.Task[None] | None = None
         self.worktree_manager: WorktreeManager | None = None
-        self._stale_cleanup_task: asyncio.Task[None] | None = None
         self._current_streaming_label: Static | None = None
         self._current_ai_row: Vertical | None = None
         self._current_accumulated_text: str = ""
@@ -824,11 +834,11 @@ class MewCodeApp(App):
     @staticmethod
     def _make_banner(model: str = "", work_dir: str = "") -> RichText:
         t = RichText()
-        t.append(" /\\_/\\    ", style="bold color(99)")
-        t.append("MewCode v0.1.0\n", style="color(242)")
-        t.append("( o.o )   ", style="bold color(99)")
+        t.append(" /\\_____/\\  ", style="bold color(99)")
+        t.append(f"{APP_NAME} v{APP_VERSION}\n", style="color(242)")
+        t.append("(  o   o  ) ", style="bold color(99)")
         t.append(f"{model}\n" if model else "\n", style="color(242)")
-        t.append(" > ^ <    ", style="bold color(99)")
+        t.append(" \\   ^   /  ", style="bold color(99)")
         t.append(work_dir, style="color(242)")
         return t
 
@@ -856,8 +866,8 @@ class MewCodeApp(App):
         yield MascotOverlay(id="mascot-overlay")
 
     async def on_mount(self) -> None:
-        self.register_theme(_MEWCODE_THEME)
-        self.theme = "mewcode"
+        self.register_theme(_KOKO_THEME)
+        self.theme = "koko"
         if len(self.providers) == 1:
             await self._select_provider(self.providers[0])
         else:
@@ -880,16 +890,18 @@ class MewCodeApp(App):
             return
 
         if self.runtime is not None:
-            await self._shutdown_mcp()
+            # 先停掉 App 持有的 MCP 初始化 task，再关 Runtime：
+            # manager 与 stale-cleanup 由 runtime-resources 扩展负责关闭。
+            await self._stop_mcp_initialization()
             await self._shutdown_runtime()
-            for task in (
-                self._notification_check_task,
-                self._stale_cleanup_task,
+            # Runtime 已关闭它，别让引用留到下一轮
+            self.mcp_manager = None
+            if (
+                self._notification_check_task is not None
+                and not self._notification_check_task.done()
             ):
-                if task is not None and not task.done():
-                    task.cancel()
+                self._notification_check_task.cancel()
             self._notification_check_task = None
-            self._stale_cleanup_task = None
             if self.session is not None:
                 self.session.close()
                 self.session = None
@@ -1022,11 +1034,23 @@ class MewCodeApp(App):
                 teammate_mode=self._teammate_mode,
                 is_interactive=True,
                 enable_coordinator_mode=self._enable_coordinator_mode,
+                mcp_manager=self.mcp_manager,
+                stale_cleanup_factory=lambda: start_stale_cleanup_task(
+                    self.worktree_manager,
+                    wt_cfg.stale_cleanup_interval,
+                    wt_cfg.stale_cutoff_hours,
+                ),
             )
+
+        # MCP manager 必须在 Runtime 打开前就有 owner：连接是可失败步骤，
+        # 在它被赋值给 self 之前取消会留下无人关闭的 client。
+        if self._mcp_server_configs:
+            self.mcp_manager = MCPManager()
+            self.mcp_manager.load_configs(self._mcp_server_configs)
 
         self.runtime = await AgentRuntime.open(
             AgentRuntimeRequest(
-                profile=ToolProfile.TUI_LEAD,
+                profile=RuntimeProfile.TUI_LEAD,
                 work_dir=work_dir,
                 agent_factory=create_agent,
                 bindings_factory=create_bindings,
@@ -1066,13 +1090,6 @@ class MewCodeApp(App):
 
         wt_command = create_worktree_command(self.worktree_manager)
         self.command_registry.register_sync(wt_command)
-        self._stale_cleanup_task = asyncio.create_task(
-            start_stale_cleanup_task(
-                self.worktree_manager,
-                wt_cfg.stale_cleanup_interval,
-                wt_cfg.stale_cutoff_hours,
-            )
-        )
 
         agent_catalog = self.agent_loader.list_agents()
         if agent_catalog:
@@ -2182,13 +2199,19 @@ class MewCodeApp(App):
     # -----------------------------------------------------------------
 
     async def _init_mcp(self) -> None:
+        """连接所有配置的 MCP 服务器，注册工具。
+
+        manager 由 `_select_provider_unlocked` 在 Runtime 打开前创建并交给
+        `koko_pi_agent.runtime-resources` 托管，这里只做连接。
+        """
+        manager = self.mcp_manager
+        if manager is None:
+            return
+
         self._mcp_connecting = True
         self._update_mode_label()
-        manager = MCPManager()
-        manager.load_configs(self._mcp_server_configs)
         tools_before = len(self.registry.list_tools())
         connect_result: ConnectResult = await manager.register_all_tools(self.registry)
-        self.mcp_manager = manager
         self._mcp_connecting = False
         self._update_mode_label()
         for err in connect_result.errors:
@@ -2196,8 +2219,6 @@ class MewCodeApp(App):
         tools_after = len(self.registry.list_tools())
         mcp_tools = tools_after - tools_before
         server_count = len(connect_result.servers)
-        if server_count > 0:
-            self._mcp_server_info = f"Connected to {server_count} MCP server(s), {mcp_tools} tools registered"
         if server_count > 0 and mcp_tools > 0:
             # 构建 MCP 指令，从 InitializeResult 提取 instructions
             parts = []
@@ -2222,17 +2243,27 @@ class MewCodeApp(App):
                 "for how to use their tools and resources:\n\n" + "\n\n".join(parts)
             )
 
-    async def _shutdown_mcp(self) -> None:
-        if self._mcp_init_task is not None:
-            self._mcp_init_task.cancel()
-            try:
-                await self._mcp_init_task
-            except (asyncio.CancelledError, Exception):
-                pass
-            self._mcp_init_task = None
-        if self.mcp_manager is not None:
-            await self.mcp_manager.shutdown()
-            self.mcp_manager = None
+    async def _stop_mcp_initialization(self) -> None:
+        """取消并等待 App 持有的 MCP 初始化 task。
+
+        只负责停止连接动作；manager 与它的 client 由 runtime-resources 扩展在
+        Runtime 关闭时释放，所以这里不再 shutdown manager。
+        用 asyncio.wait 而不是 await task：后者会把本协程自身的取消一并吞掉。
+        """
+        task = self._mcp_init_task
+        if task is None:
+            return
+        self._mcp_init_task = None
+        if task.done():
+            return
+
+        task.cancel()
+        _, still_pending = await asyncio.wait([task], timeout=DEFAULT_CANCEL_TIMEOUT)
+        if still_pending:
+            log.warning(
+                "MCP initialization ignored cancellation for %ss",
+                DEFAULT_CANCEL_TIMEOUT,
+            )
 
     async def _shutdown_runtime(self) -> None:
         runtime = self.runtime
@@ -2292,11 +2323,11 @@ class MewCodeApp(App):
                     if not t.done():
                         t.cancel()
 
-            await self._shutdown_mcp()
+            # 顺序不能反：先停连接动作，再关 Runtime，
+            # 由它撤销 contribution 并取消/等待 MCP manager 与 stale-cleanup。
+            await self._stop_mcp_initialization()
             await self._shutdown_runtime()
-
-            if self._stale_cleanup_task and not self._stale_cleanup_task.done():
-                self._stale_cleanup_task.cancel()
+            self.mcp_manager = None
 
             if hasattr(self, "team_manager"):
                 for name in list(self.team_manager._teams):
